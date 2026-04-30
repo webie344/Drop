@@ -6,6 +6,7 @@ import {
   getUserProfile, getUserByHandle, updateMyProfile, ensureUserProfile,
   uploadToCloudinary, grantBeacon,
   createBeam, listenBeams, toggleGlow, deleteBeam,
+  getBeam, listenBeam, addEcho, listenEchoes,
   createCircle, listenCircles, getCircle, joinCircle, leaveCircle,
   openOrCreateDirectChat, listenMyChats, listenChat, listenMessages,
   sendMessage, addReaction, updateChatSettings,
@@ -110,6 +111,19 @@ function applyTheme(theme) {
     : (theme || "dark");
   document.documentElement.setAttribute("data-theme", t);
   localStorage.setItem("orbit:theme", theme || "dark");
+  // sync any visible quick-toggle icons
+  document.querySelectorAll('[data-theme-toggle]').forEach(btn => {
+    const icon = btn.querySelector('i');
+    if (icon) {
+      icon.setAttribute("data-lucide", t === "dark" ? "sun" : "moon");
+      btn.title = t === "dark" ? "Switch to light mode" : "Switch to dark mode";
+    }
+  });
+  refreshIcons && refreshIcons();
+}
+function toggleTheme() {
+  const current = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+  applyTheme(current === "dark" ? "light" : "dark");
 }
 applyTheme(localStorage.getItem("orbit:theme") || "dark");
 applyAccent(localStorage.getItem("orbit:accent") || "violet");
@@ -245,6 +259,7 @@ const ROUTES = {
   circle: renderCircleDetail,
   signals: renderSignals,
   profile: renderProfile,
+  beam: renderBeamDetail,
   settings: renderSettings,
   notifications: renderNotifications,
   search: renderSearch,
@@ -386,17 +401,35 @@ function renderBeam(b) {
   ]);
   node.append(head);
 
-  if (b.body) node.append(el("div", { class: "beam-body", text: b.body }));
-  if (b.imageURL) {
+  // Tappable area opens the post detail
+  const openDetail = () => navigate(`/beam/${b.id}`);
+
+  if (b.body) {
+    const body = el("div", { class: "beam-body", text: b.body });
+    body.style.cursor = "pointer";
+    body.addEventListener("click", openDetail);
+    node.append(body);
+  }
+  if (b.videoURL) {
+    const vid = el("video", { src: b.videoURL, playsinline: "", muted: "", loop: "", preload: "metadata", controls: "" });
+    const wrap = el("div", { class: "beam-image beam-video" }, [vid]);
+    wrap.style.cursor = "pointer";
+    wrap.addEventListener("click", (e) => { if (e.target.tagName !== "VIDEO") openDetail(); });
+    node.append(wrap);
+  } else if (b.imageURL) {
     const img = el("img", { src: b.imageURL, alt: "", loading: "lazy" });
-    node.append(el("div", { class: "beam-image" }, [img]));
+    const wrap = el("div", { class: "beam-image" }, [img]);
+    wrap.style.cursor = "pointer";
+    wrap.addEventListener("click", openDetail);
+    node.append(wrap);
   }
 
   const glowBtn = el("button", { class: "beam-act" + (isGlowed ? " is-glowed" : "") }, [
     el("i", { "data-lucide": "heart" }),
     el("span", { text: String(b.glowsCount || 0) })
   ]);
-  glowBtn.addEventListener("click", async () => {
+  glowBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
     glowBtn.classList.add("glowing");
     setTimeout(() => glowBtn.classList.remove("glowing"), 600);
     const nowGlowed = await toggleGlow(b.id, state.user.uid);
@@ -410,16 +443,97 @@ function renderBeam(b) {
     refreshIcons();
   });
 
-  const replyBtn = el("button", { class: "beam-act", onClick: () => openSignalWith(b.authorUid) }, [
-    el("i", { "data-lucide": "reply" }), el("span", { text: "Signal" })
+  const echoBtn = el("button", { class: "beam-act", onClick: (e) => { e.stopPropagation(); openDetail(); } }, [
+    el("i", { "data-lucide": "message-circle" }), el("span", { text: String(b.echoesCount || 0) })
   ]);
-  const shareBtn = el("button", { class: "beam-act", onClick: () => { navigator.clipboard?.writeText(`${location.origin}${location.pathname}#/profile/${b.authorHandle}`); toast("Link copied", "success", "check"); } }, [
-    el("i", { "data-lucide": "share-2" }), el("span", { text: "Share" })
+  const signalBtn = el("button", { class: "beam-act", onClick: (e) => { e.stopPropagation(); openSignalWith(b.authorUid); } }, [
+    el("i", { "data-lucide": "send" })
+  ]);
+  const shareBtn = el("button", { class: "beam-act", onClick: (e) => { e.stopPropagation(); navigator.clipboard?.writeText(`${location.origin}${location.pathname}#/beam/${b.id}`); toast("Link copied", "success", "check"); } }, [
+    el("i", { "data-lucide": "share-2" })
   ]);
 
-  node.append(el("div", { class: "beam-actions" }, [glowBtn, replyBtn, shareBtn]));
+  node.append(el("div", { class: "beam-actions" }, [glowBtn, echoBtn, signalBtn, shareBtn]));
   node.addEventListener("contextmenu", (e) => { e.preventDefault(); beamMenu(e, b); });
   return node;
+}
+
+/* ============================================================
+   SCREEN: BEAM DETAIL (post + echoes/comments)
+   ============================================================ */
+async function renderBeamDetail(view, params) {
+  const id = params[0];
+  if (!id) { navigate("/stream"); return; }
+  const inner = el("div", { class: "view-inner stream" });
+  const header = el("header", { class: "view-header detail-header" }, [
+    el("button", { class: "btn-icon", onClick: () => history.length > 1 ? history.back() : navigate("/stream"), "aria-label": "Back" }, [el("i", { "data-lucide": "arrow-left" })]),
+    el("h2", { text: "Beam" })
+  ]);
+  inner.append(header);
+  const beamHolder = el("div");
+  const echoesHolder = el("div", { class: "echo-list" });
+  inner.append(beamHolder, echoesHolder);
+  view.append(inner);
+
+  const renderInto = (b) => {
+    beamHolder.innerHTML = "";
+    beamHolder.append(renderBeam(b));
+    refreshIcons();
+  };
+  // Live beam updates
+  const u1 = listenBeam(id, renderInto);
+  state.unsub.push(u1);
+  // Echoes (comments)
+  const u2 = listenEchoes(id, (echoes) => {
+    echoesHolder.innerHTML = "";
+    echoesHolder.append(el("div", { class: "echo-head", text: `${echoes.length} ${echoes.length === 1 ? "Echo" : "Echoes"}` }));
+    if (!echoes.length) {
+      echoesHolder.append(el("div", { class: "muted text-sm", style: { padding: "1rem", textAlign: "center" }, text: "Be the first to Echo this Beam." }));
+    } else {
+      echoes.forEach(e => echoesHolder.append(renderEcho(e)));
+    }
+    refreshIcons();
+  });
+  state.unsub.push(u2);
+
+  // Compose echo
+  const composer = el("div", { class: "echo-composer" });
+  const ta = el("textarea", { placeholder: "Echo this Beam...", rows: 1, maxlength: 400 });
+  ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 120) + "px"; });
+  const sendBtn = el("button", { class: "chat-send", "aria-label": "Send Echo" }, [el("i", { "data-lucide": "send" })]);
+  ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendBtn.click(); } });
+  sendBtn.addEventListener("click", async () => {
+    const text = ta.value.trim();
+    if (!text) return;
+    sendBtn.disabled = true;
+    try {
+      await addEcho(id, { author: state.profile, text });
+      const beam = await getBeam(id);
+      if (beam && beam.authorUid !== state.user.uid) {
+        createNotification(beam.authorUid, { kind: "echo", fromUid: state.user.uid, fromName: state.profile.displayName, beamId: id });
+      }
+      ta.value = ""; ta.style.height = "auto";
+    } catch (err) { toast(err.message, "error", "alert-circle"); }
+    finally { sendBtn.disabled = false; }
+  });
+  composer.append(avatar(state.profile, "sm"), ta, sendBtn);
+  inner.append(composer);
+  refreshIcons();
+}
+
+function renderEcho(e) {
+  const row = el("div", { class: "echo" }, [
+    avatar({ displayName: e.authorName, photoURL: e.authorPhoto }, "sm"),
+    el("div", { class: "echo-body" }, [
+      el("div", { class: "row gap-1" }, [
+        el("a", { class: "fw-600", href: `#/profile/${e.authorHandle}`, text: e.authorName }),
+        e.authorVerified ? beaconIcon() : null,
+        el("span", { class: "text-xs muted", text: " · " + timeAgo(e.createdAt) })
+      ]),
+      el("div", { text: e.text, style: { marginTop: "0.15rem" } })
+    ])
+  ]);
+  return row;
 }
 
 function beamMenu(e, b) {
@@ -439,13 +553,15 @@ function beamMenu(e, b) {
    COMPOSE (sheet)
    ============================================================ */
 async function openCompose(presetCircleId = null) {
-  let imageFile = null;
-  let imagePreviewURL = null;
+  let mediaFile = null;
+  let mediaPreviewURL = null;
+  let mediaKind = null; // 'image' | 'video'
 
   const textarea = el("textarea", { placeholder: "What light are you sending out?", maxlength: 600 });
   const counter = el("span", { class: "compose-counter", text: "0 / 600" });
   const previewWrap = el("div", { class: "compose-preview hidden" });
-  const fileInput = el("input", { type: "file", accept: "image/*", style: { display: "none" } });
+  const imgInput = el("input", { type: "file", accept: "image/*", style: { display: "none" } });
+  const vidInput = el("input", { type: "file", accept: "video/*", style: { display: "none" } });
   let circleId = presetCircleId;
 
   textarea.addEventListener("input", () => {
@@ -455,37 +571,46 @@ async function openCompose(presetCircleId = null) {
     counter.classList.toggle("over", textarea.value.length > 580);
   });
 
-  fileInput.addEventListener("change", () => {
-    const f = fileInput.files?.[0]; if (!f) return;
-    imageFile = f;
-    if (imagePreviewURL) URL.revokeObjectURL(imagePreviewURL);
-    imagePreviewURL = URL.createObjectURL(f);
+  const setMedia = (f, kind) => {
+    mediaFile = f; mediaKind = kind;
+    if (mediaPreviewURL) URL.revokeObjectURL(mediaPreviewURL);
+    mediaPreviewURL = URL.createObjectURL(f);
     previewWrap.innerHTML = "";
     previewWrap.classList.remove("hidden");
+    const previewMedia = kind === "video"
+      ? el("video", { src: mediaPreviewURL, controls: "", playsinline: "", muted: "" })
+      : el("img", { src: mediaPreviewURL, alt: "" });
     previewWrap.append(
-      el("img", { src: imagePreviewURL, alt: "" }),
-      el("button", { class: "remove", "aria-label": "Remove", onClick: () => { imageFile = null; previewWrap.innerHTML = ""; previewWrap.classList.add("hidden"); } }, [el("i", { "data-lucide": "x" })])
+      previewMedia,
+      el("button", { class: "remove", "aria-label": "Remove", onClick: () => { mediaFile = null; mediaKind = null; previewWrap.innerHTML = ""; previewWrap.classList.add("hidden"); } }, [el("i", { "data-lucide": "x" })])
     );
     refreshIcons();
+  };
+  imgInput.addEventListener("change", () => { const f = imgInput.files?.[0]; if (f) setMedia(f, "image"); });
+  vidInput.addEventListener("change", () => {
+    const f = vidInput.files?.[0]; if (!f) return;
+    if (f.size > 80 * 1024 * 1024) { toast("Video is too large (max 80 MB)", "error", "alert-circle"); return; }
+    setMedia(f, "video");
   });
 
   const sendBtn = el("button", { class: "btn btn-primary" }, [el("i", { "data-lucide": "send" }), "Send Beam"]);
   sendBtn.addEventListener("click", async () => {
     const body = textarea.value.trim();
-    if (!body && !imageFile) { toast("Add a thought or image", "error", "alert-circle"); return; }
+    if (!body && !mediaFile) { toast("Add a thought, image, or video", "error", "alert-circle"); return; }
     sendBtn.disabled = true; sendBtn.querySelector("span")?.remove?.();
     sendBtn.append(el("span", { class: "btn-spinner" }));
     try {
-      let imageURL = null;
-      if (imageFile) {
-        const up = await uploadToCloudinary(imageFile, { folder: "orbit/beams" });
-        imageURL = up.url;
+      let imageURL = null, videoURL = null;
+      if (mediaFile) {
+        toast(mediaKind === "video" ? "Uploading video..." : "Uploading image...", "info", "upload-cloud");
+        const up = await uploadToCloudinary(mediaFile, { folder: mediaKind === "video" ? "orbit/flicks" : "orbit/beams" });
+        if (mediaKind === "video") videoURL = up.url; else imageURL = up.url;
       }
       await createBeam({
-        author: state.profile, body, imageURL, circleId,
-        kind: "beam"
+        author: state.profile, body, imageURL, videoURL, circleId,
+        kind: mediaKind === "video" ? "flick" : "beam"
       });
-      toast("Beam sent", "success", "send");
+      toast(mediaKind === "video" ? "Flick posted" : "Beam sent", "success", "send");
       close();
     } catch (err) {
       console.error(err);
@@ -495,11 +620,11 @@ async function openCompose(presetCircleId = null) {
   });
 
   const tools = el("div", { class: "compose-tools" }, [
-    el("button", { class: "tool", onClick: () => fileInput.click() }, [el("i", { "data-lucide": "image" }), "Image"]),
+    el("button", { class: "tool", onClick: () => imgInput.click() }, [el("i", { "data-lucide": "image" }), "Image"]),
+    el("button", { class: "tool", onClick: () => vidInput.click() }, [el("i", { "data-lucide": "video" }), "Video"]),
     el("button", { class: "tool", onClick: async () => {
-      // pick a circle
-      const circles = await pickCirclePrompt();
-      if (circles) { circleId = circles.id; toast(`Posting to ${circles.name}`, "info", "users-round"); }
+      const c = await pickCirclePrompt();
+      if (c) { circleId = c.id; toast(`Posting to ${c.name}`, "info", "users-round"); }
     } }, [el("i", { "data-lucide": "users-round" }), "Circle"]),
     el("div", { style: { flex: "1" } }),
     counter
@@ -511,7 +636,7 @@ async function openCompose(presetCircleId = null) {
 
   const body = el("div", { class: "compose-area" }, [
     el("div", { style: { display: "flex", gap: "0.75rem", alignItems: "flex-start" } }, [avatar(state.profile, "sm"), textarea]),
-    previewWrap, tools, fileInput,
+    previewWrap, tools, imgInput, vidInput,
     el("div", { style: { display: "flex", justifyContent: "flex-end", marginTop: "0.5rem" } }, [sendBtn])
   ]);
   const close = openSheet({ body });
@@ -553,21 +678,43 @@ function renderFlicks(view) {
   const wrap = el("div", { class: "flicks" });
   view.append(wrap);
   const unsub = listenBeams((items) => {
-    const flicks = items.filter(b => b.kind === "flick" || b.imageURL);
+    const flicks = items.filter(b => b.videoURL || b.kind === "flick" || b.imageURL);
     wrap.innerHTML = "";
     if (!flicks.length) {
-      wrap.append(emptyState("play-circle", "No Flicks yet", "Compose a Beam with an image and it will appear here as a Flick."));
+      wrap.append(emptyState("play-circle", "No Flicks yet", "Compose a Beam with a video and it will appear here as a Flick.",
+        el("button", { class: "btn btn-primary", onClick: () => openCompose() }, [el("i", { "data-lucide": "video" }), "Record / Upload"])));
       refreshIcons(); return;
     }
     flicks.forEach(b => wrap.append(renderFlick(b)));
     refreshIcons();
+    // Auto-play first visible video
+    setupFlickAutoplay(wrap);
   });
   state.unsub.push(unsub);
 }
+function setupFlickAutoplay(wrap) {
+  const vids = wrap.querySelectorAll("video");
+  if (!vids.length || !("IntersectionObserver" in window)) return;
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      const v = e.target;
+      if (e.intersectionRatio > 0.6) v.play().catch(()=>{});
+      else v.pause();
+    });
+  }, { threshold: [0, 0.6, 1] });
+  vids.forEach(v => obs.observe(v));
+}
 function renderFlick(b) {
   const node = el("section", { class: "flick" });
-  if (b.imageURL) node.append(el("img", { src: b.imageURL, alt: "", loading: "lazy", style: { objectFit: "cover", width: "100%", height: "100%" } }));
-  else node.append(el("div", { class: "flick-fallback", text: (b.body || "").slice(0, 60) }));
+  if (b.videoURL) {
+    const v = el("video", { src: b.videoURL, playsinline: "", loop: "", muted: "", preload: "metadata", style: { objectFit: "cover", width: "100%", height: "100%" } });
+    v.addEventListener("click", () => { v.muted = !v.muted; });
+    node.append(v);
+  } else if (b.imageURL) {
+    node.append(el("img", { src: b.imageURL, alt: "", loading: "lazy", style: { objectFit: "cover", width: "100%", height: "100%" } }));
+  } else {
+    node.append(el("div", { class: "flick-fallback", text: (b.body || "").slice(0, 60) }));
+  }
   node.append(el("div", { class: "flick-overlay" }));
   const meta = el("div", { class: "flick-meta" }, [
     el("div", { class: "who" }, [
@@ -1018,7 +1165,16 @@ async function renderProfile(view, params) {
       if (!filtered.length) list.append(emptyState("sparkles", "No " + kind + " yet", "Send a Beam to brighten this profile."));
       else if (kind === "flicks") {
         const grid = el("div", { class: "media-grid" });
-        filtered.forEach(b => grid.append(el("div", { class: "tile", onClick: () => navigate("/flicks") }, [el("img", { src: b.imageURL, alt: "" })])));
+        filtered.forEach(b => {
+          const tile = el("div", { class: "tile", onClick: () => navigate(`/beam/${b.id}`) });
+          if (b.videoURL) {
+            tile.append(el("video", { src: b.videoURL, muted: "", playsinline: "", preload: "metadata" }));
+            tile.append(el("span", { class: "tile-play" }, [el("i", { "data-lucide": "play" })]));
+          } else {
+            tile.append(el("img", { src: b.imageURL, alt: "" }));
+          }
+          grid.append(tile);
+        });
         list.append(grid);
       } else {
         filtered.forEach(b => list.append(renderBeam(b)));
@@ -1159,13 +1315,15 @@ function renderNotifications(view) {
     items.forEach(n => {
       const labels = {
         glow: `${n.fromName} sent a Glow on your Beam`,
+        echo: `${n.fromName} Echoed your Beam`,
         signal: `${n.fromName} sent you a Signal`,
         follow: `${n.fromName} added you to their Constellation`
       };
-      const icons = { glow: "heart", signal: "message-square", follow: "user-plus" };
+      const icons = { glow: "heart", echo: "message-circle", signal: "message-square", follow: "user-plus" };
       const item = el("div", { class: "notif-item", onClick: () => {
         if (n.kind === "signal") navigate(`/signals/${n.chatId}`);
         else if (n.kind === "follow") navigate(`/profile/${n.fromName}`);
+        else if (n.kind === "glow" || n.kind === "echo") navigate(`/beam/${n.beamId}`);
       } }, [
         el("div", { class: "icn-wrap" }, [el("i", { "data-lucide": icons[n.kind] || "bell" })]),
         el("div", { class: "flex-1" }, [el("div", { text: labels[n.kind] || "New activity" }), el("div", { class: "when", text: timeAgo(n.createdAt) })])
@@ -1324,6 +1482,9 @@ setupAuthScreen();
 
 $("#btn-compose").addEventListener("click", () => openCompose());
 $("#bn-compose").addEventListener("click", () => openCompose());
+$("#btn-theme")?.addEventListener("click", toggleTheme);
+// Run once on boot to sync the toggle icon
+applyTheme(localStorage.getItem("orbit:theme") || "dark");
 
 // Default route
 if (!location.hash) location.hash = "#/stream";

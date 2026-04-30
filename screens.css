@@ -159,6 +159,61 @@
 }
 @keyframes divider-in { from { opacity: 0; transform: scaleX(0.4); } to { opacity: 1; transform: scaleX(1); } }
 
+/* Beam detail header (back button + title) */
+.detail-header { display: flex; align-items: center; gap: 0.5rem; }
+.detail-header h2 { font-size: 1.1rem; font-weight: 600; }
+
+/* Echoes (comments) on a Beam */
+.echo-list { padding-bottom: 5rem; }
+.echo-head { padding: 0.75rem 1rem 0.25rem; font-size: 0.85rem; color: hsl(var(--text-muted)); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid hsl(var(--border-soft)); }
+.echo {
+  display: flex; gap: 0.65rem; align-items: flex-start;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid hsl(var(--border-soft));
+}
+.echo-body { flex: 1; min-width: 0; line-height: 1.4; font-size: 0.95rem; }
+.echo-body a { color: inherit; }
+.echo-body a:hover { color: hsl(var(--accent)); }
+
+.echo-composer {
+  position: sticky; bottom: 0;
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  background: hsl(var(--bg) / 0.95);
+  backdrop-filter: blur(14px);
+  border-top: 1px solid hsl(var(--border-soft));
+}
+.echo-composer textarea {
+  flex: 1; resize: none;
+  background: hsl(var(--surface));
+  border: 1px solid hsl(var(--border-soft));
+  border-radius: 999px;
+  padding: 0.55rem 0.9rem;
+  max-height: 120px;
+  line-height: 1.35;
+}
+.echo-composer textarea:focus { border-color: hsl(var(--accent) / 0.6); }
+@media (max-width: 880px) { .echo-composer { bottom: 64px; } }
+
+/* Beam video block */
+.beam-video video { width: 100%; max-height: 70vh; background: black; display: block; }
+
+/* Profile flick tile play badge */
+.media-grid .tile { position: relative; }
+.media-grid .tile video, .media-grid .tile img { width: 100%; height: 100%; object-fit: cover; }
+.tile-play {
+  position: absolute; top: 6px; right: 6px;
+  background: hsl(0 0% 0% / 0.55); color: white;
+  width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center;
+  backdrop-filter: blur(4px);
+}
+.tile-play i { width: 12px; height: 12px; }
+
+/* Sidebar theme toggle button */
+.theme-toggle-btn { margin-top: 0.5rem; justify-content: center; }
+.theme-toggle-btn i { width: 18px; height: 18px; }
+
 /* Composer card at top of stream — edge-to-edge, just a divider below */
 .composer-card {
   background: transparent;
