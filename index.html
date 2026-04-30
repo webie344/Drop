@@ -1,153 +1,270 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en" data-theme="dark">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#0a0e1f" />
-  <meta name="description" content="Orbit — a calmer, more luminous social experience." />
-  <title>Orbit</title>
-
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0b0b12" />
+  <title>Halo — A quieter social</title>
+  <meta name="description" content="Halo — a quiet, premium social space for Beams, Loops, and Rooms." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-
-  <link rel="stylesheet" href="styles.css" />
-  <link rel="stylesheet" href="screens.css" />
-
-  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="chat.css" />
 </head>
 <body>
-  <!-- Boot loader (shown until Firebase auth resolves) -->
-  <div id="boot" class="boot">
-    <div class="boot-orbit">
-      <div class="boot-ring"></div>
-      <div class="boot-ring boot-ring-2"></div>
-      <div class="boot-core"></div>
-    </div>
-    <p class="boot-label">Orbit</p>
+
+  <!-- ============ SPLASH ============ -->
+  <div id="splash" class="splash">
+    <div class="splash-ring"></div>
+    <div class="splash-word">Halo</div>
   </div>
 
-  <!-- Auth screen -->
-  <section id="auth-screen" class="screen auth-screen hidden">
-    <div class="auth-stars" aria-hidden="true"></div>
+  <!-- ============ AUTH ============ -->
+  <section id="auth" class="auth hidden">
+    <div class="auth-bg"></div>
     <div class="auth-card">
       <div class="auth-brand">
-        <div class="brand-mark"><span class="brand-mark-core"></span></div>
-        <h1 class="brand-name">Orbit</h1>
-        <p class="brand-tag">A calmer place to share light.</p>
+        <div class="brand-mark"><span class="brand-ring"></span><span class="brand-dot"></span></div>
+        <h1 class="brand-name">Halo</h1>
+        <p class="brand-tag">A quieter kind of social.</p>
       </div>
 
       <div class="auth-tabs">
-        <button class="auth-tab is-active" data-auth-tab="signin">Sign in</button>
-        <button class="auth-tab" data-auth-tab="signup">Create account</button>
+        <button class="auth-tab active" data-mode="signin">Sign in</button>
+        <button class="auth-tab" data-mode="signup">Create account</button>
+        <span class="auth-tab-ind"></span>
       </div>
 
-      <form id="auth-form" class="auth-form" autocomplete="on">
-        <div class="field" data-only="signup">
-          <label for="auth-name">Display name</label>
-          <input id="auth-name" type="text" placeholder="What should we call you?" autocomplete="name" />
-        </div>
-        <div class="field" data-only="signup">
-          <label for="auth-handle">Handle</label>
-          <div class="handle-input">
-            <span>@</span>
-            <input id="auth-handle" type="text" placeholder="yourhandle" autocomplete="username" />
-          </div>
-        </div>
-        <div class="field">
-          <label for="auth-email">Email</label>
-          <input id="auth-email" type="email" placeholder="you@example.com" autocomplete="email" required />
-        </div>
-        <div class="field">
-          <label for="auth-pass">Password</label>
-          <input id="auth-pass" type="password" placeholder="At least 6 characters" autocomplete="current-password" required />
-        </div>
-
-        <button type="submit" id="auth-submit" class="btn btn-primary btn-block">
-          <span class="btn-label">Sign in</span>
-          <span class="btn-spinner hidden"></span>
+      <form id="auth-form" class="auth-form" autocomplete="on" novalidate>
+        <label class="field" data-only="signup">
+          <span>Display name</span>
+          <input type="text" id="auth-name" placeholder="What should we call you?" autocomplete="name" />
+        </label>
+        <label class="field">
+          <span>Email</span>
+          <input type="email" id="auth-email" placeholder="you@orbit.space" required autocomplete="email" />
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input type="password" id="auth-pass" placeholder="At least 6 characters" minlength="6" required autocomplete="current-password" />
+        </label>
+        <button type="submit" class="btn btn-primary auth-submit">
+          <span class="btn-label">Continue</span>
+          <span class="btn-spinner"></span>
         </button>
-
-        <div class="auth-divider"><span>or</span></div>
-
-        <button type="button" id="google-btn" class="btn btn-ghost btn-block">
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="#EA4335" d="M12 11v3.2h4.5c-.2 1.2-1.4 3.5-4.5 3.5-2.7 0-4.9-2.2-4.9-5s2.2-5 4.9-5c1.5 0 2.6.6 3.2 1.2l2.2-2.1C16 5.4 14.2 4.6 12 4.6 7.9 4.6 4.6 7.9 4.6 12s3.3 7.4 7.4 7.4c4.3 0 7.1-3 7.1-7.2 0-.5-.1-.9-.1-1.2H12z"/></svg>
-          Continue with Google
-        </button>
-
         <p class="auth-error" id="auth-error"></p>
+        <p class="auth-fineprint">By continuing you agree to keep your Orbit kind.</p>
       </form>
     </div>
   </section>
 
-  <!-- App shell -->
-  <section id="app-shell" class="app-shell hidden">
-    <!-- Sidebar (desktop) -->
-    <aside class="sidebar">
-      <div class="sidebar-brand">
-        <div class="brand-mark sm"><span class="brand-mark-core"></span></div>
-        <span class="brand-name sm">Orbit</span>
-      </div>
-      <nav class="sidebar-nav">
-        <a href="#/stream" class="nav-item" data-route="stream">
-          <i data-lucide="sparkles"></i><span>Stream</span>
+  <!-- ============ APP SHELL ============ -->
+  <main id="app" class="app hidden">
+
+    <!-- desktop sidebar -->
+    <aside class="sidenav">
+      <a class="brand" href="#/" data-route="/">
+        <span class="brand-mark"><span class="brand-ring"></span><span class="brand-dot"></span></span>
+        <span class="brand-name">Halo</span>
+      </a>
+
+      <nav class="nav">
+        <a class="nav-item" href="#/" data-route="/" data-tip="Stream">
+          <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <span>Stream</span>
         </a>
-        <a href="#/flicks" class="nav-item" data-route="flicks">
-          <i data-lucide="play-circle"></i><span>Flicks</span>
+        <a class="nav-item" href="#/loops" data-route="/loops" data-tip="Loops">
+          <svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M10 9l5 3-5 3V9z" fill="currentColor"/></svg>
+          <span>Loops</span>
         </a>
-        <a href="#/circles" class="nav-item" data-route="circles">
-          <i data-lucide="users-round"></i><span>Circles</span>
+        <a class="nav-item" href="#/rooms" data-route="/rooms" data-tip="Rooms">
+          <svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4V5z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/></svg>
+          <span>Rooms</span>
         </a>
-        <a href="#/signals" class="nav-item" data-route="signals">
-          <i data-lucide="message-square"></i><span>Signals</span>
-          <span class="badge nav-badge hidden" id="nav-signals-badge">0</span>
+        <a class="nav-item" href="#/halo" data-route="/halo" data-tip="Halo">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" stroke="currentColor" stroke-width="1.6" fill="none"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/></svg>
+          <span>Halo</span>
         </a>
-        <a href="#/notifications" class="nav-item" data-route="notifications">
-          <i data-lucide="bell"></i><span>Notifications</span>
-          <span class="badge nav-badge hidden" id="nav-notif-badge">0</span>
-        </a>
-        <a href="#/profile" class="nav-item" data-route="profile">
-          <i data-lucide="user"></i><span>Profile</span>
-        </a>
-        <a href="#/settings" class="nav-item" data-route="settings">
-          <i data-lucide="settings"></i><span>Settings</span>
+        <a class="nav-item" href="#/me" data-route="/me" data-tip="You">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="9" r="3.5" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M5 19c1.5-3.5 4-5 7-5s5.5 1.5 7 5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+          <span>You</span>
         </a>
       </nav>
-      <button class="btn btn-primary btn-compose" id="btn-compose">
-        <i data-lucide="feather"></i><span>Compose Beam</span>
+
+      <button class="sidenav-compose" id="open-compose">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>New beam</span>
       </button>
-      <button class="btn btn-ghost btn-block theme-toggle-btn" id="btn-theme" data-theme-toggle title="Toggle theme">
-        <i data-lucide="sun"></i><span>Toggle theme</span>
-      </button>
-      <div class="sidebar-me" id="sidebar-me"></div>
+
+      <div class="sidenav-foot">
+        <button class="icon-btn" id="open-cmd" title="Quick jump (⌘K)">
+          <svg viewBox="0 0 24 24"><path d="M11 4a7 7 0 105.4 11.4l3.3 3.3 1.4-1.4-3.3-3.3A7 7 0 0011 4z" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
+        </button>
+        <button class="icon-btn" id="toggle-theme" title="Toggle theme">
+          <svg viewBox="0 0 24 24" class="ic-moon"><path d="M20 14.5A8 8 0 1110.5 4a7 7 0 009.5 10.5z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/></svg>
+          <svg viewBox="0 0 24 24" class="ic-sun"><circle cx="12" cy="12" r="3.6" stroke="currentColor" stroke-width="1.6" fill="none"/><g stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 3v2.5"/><path d="M12 18.5V21"/><path d="M3 12h2.5"/><path d="M18.5 12H21"/><path d="M5.5 5.5l1.8 1.8"/><path d="M16.7 16.7l1.8 1.8"/><path d="M5.5 18.5l1.8-1.8"/><path d="M16.7 7.3l1.8-1.8"/></g></svg>
+        </button>
+        <button class="icon-btn" id="signout-btn" title="Sign out">
+          <svg viewBox="0 0 24 24"><path d="M14 7V5a2 2 0 00-2-2H6a2 2 0 00-2 2v14a2 2 0 002 2h6a2 2 0 002-2v-2M10 12h11m0 0l-3-3m3 3l-3 3" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
     </aside>
 
-    <!-- Main view router -->
-    <main class="view" id="view"></main>
+    <!-- main view mount -->
+    <section id="view" class="view"></section>
 
-    <!-- Mobile bottom nav -->
-    <nav class="bottom-nav">
-      <a href="#/stream" class="bn-item" data-route="stream"><i data-lucide="sparkles"></i></a>
-      <a href="#/flicks" class="bn-item" data-route="flicks"><i data-lucide="play-circle"></i></a>
-      <button class="bn-compose" id="bn-compose" aria-label="Compose"><i data-lucide="feather"></i></button>
-      <a href="#/signals" class="bn-item" data-route="signals"><i data-lucide="message-square"></i><span class="dot hidden" id="bn-signals-dot"></span></a>
-      <a href="#/profile" class="bn-item" data-route="profile"><i data-lucide="user"></i></a>
+    <!-- mobile bottom nav -->
+    <nav class="bottomnav">
+      <a class="bn-item" href="#/" data-route="/">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        <span>Stream</span>
+      </a>
+      <a class="bn-item" href="#/loops" data-route="/loops">
+        <svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z" stroke="currentColor" stroke-width="1.7" fill="none"/><path d="M10 9l5 3-5 3V9z" fill="currentColor"/></svg>
+        <span>Loops</span>
+      </a>
+      <button class="bn-fab" id="open-compose-mobile" aria-label="New beam">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      </button>
+      <a class="bn-item" href="#/rooms" data-route="/rooms">
+        <svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4V5z" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linejoin="round"/></svg>
+        <span>Rooms</span>
+      </a>
+      <a class="bn-item" href="#/me" data-route="/me">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="9" r="3.5" stroke="currentColor" stroke-width="1.7" fill="none"/><path d="M5 19c1.5-3.5 4-5 7-5s5.5 1.5 7 5" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round"/></svg>
+        <span>You</span>
+      </a>
     </nav>
-  </section>
+  </main>
 
-  <!-- Modal root -->
-  <div id="modal-root" class="modal-root"></div>
+  <!-- ============ MODALS ============ -->
 
-  <!-- Sheet root (bottom sheet / drawer) -->
-  <div id="sheet-root" class="sheet-root"></div>
+  <!-- Compose -->
+  <div class="modal" id="compose-modal" aria-hidden="true">
+    <div class="modal-scrim" data-close></div>
+    <div class="modal-card compose-card">
+      <header class="modal-head">
+        <h3>New beam</h3>
+        <button class="icon-btn" data-close aria-label="Close">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </header>
+      <div class="compose-body">
+        <textarea id="compose-text" placeholder="What's catching your light right now?" rows="5"></textarea>
+        <div class="compose-image-preview" id="compose-image-preview"></div>
+        <div class="compose-actions">
+          <label class="btn btn-ghost">
+            <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.6" fill="none"/><circle cx="8.5" cy="10.5" r="1.5" fill="currentColor"/><path d="M3 17l5-5 5 5 3-3 5 5" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
+            <span>Add image</span>
+            <input type="file" accept="image/*" id="compose-image" hidden />
+          </label>
+          <button class="btn btn-primary" id="compose-publish">
+            <span class="btn-label">Send beam</span>
+            <span class="btn-spinner"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 
-  <!-- Context menu root -->
-  <div id="ctx-root" class="ctx-root"></div>
+  <!-- Create Room -->
+  <div class="modal" id="create-room-modal" aria-hidden="true">
+    <div class="modal-scrim" data-close></div>
+    <div class="modal-card">
+      <header class="modal-head">
+        <h3>New room</h3>
+        <button class="icon-btn" data-close aria-label="Close">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </header>
+      <div class="modal-body">
+        <label class="field">
+          <span>Room name</span>
+          <input type="text" id="room-name" placeholder="e.g. Late night thinkers" />
+        </label>
+        <label class="field">
+          <span>Cover emoji</span>
+          <input type="text" id="room-emoji" placeholder="✨" maxlength="2" />
+        </label>
+        <label class="field">
+          <span>Add members by handle (comma-separated)</span>
+          <input type="text" id="room-members" placeholder="@aria, @sol, @nori" />
+        </label>
+        <button class="btn btn-primary full" id="create-room-btn">Create room</button>
+      </div>
+    </div>
+  </div>
 
-  <!-- Toasts -->
-  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <!-- Command palette -->
+  <div class="modal cmd" id="command-palette" aria-hidden="true">
+    <div class="modal-scrim" data-close></div>
+    <div class="cmd-card">
+      <input type="text" id="cmd-input" placeholder="Jump to a room, beam, or person…" />
+      <ul id="cmd-list" class="cmd-list"></ul>
+      <footer class="cmd-foot">
+        <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+        <span><kbd>↵</kbd> open</span>
+        <span><kbd>Esc</kbd> close</span>
+      </footer>
+    </div>
+  </div>
 
-  <!-- App entry -->
-  <script type="module" src="app.js"></script>
+  <!-- Chat theme picker -->
+  <div class="modal" id="chat-theme-modal" aria-hidden="true">
+    <div class="modal-scrim" data-close></div>
+    <div class="modal-card">
+      <header class="modal-head">
+        <h3>Customize this room</h3>
+        <button class="icon-btn" data-close aria-label="Close">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </header>
+      <div class="modal-body">
+        <div class="theme-group">
+          <label class="theme-label">Wallpaper</label>
+          <div class="wallpaper-grid" id="wallpaper-grid"></div>
+        </div>
+        <div class="theme-group">
+          <label class="theme-label">Bubble color</label>
+          <div class="bubble-color-grid" id="bubble-color-grid"></div>
+        </div>
+        <div class="theme-group">
+          <label class="theme-label">Bubble shape</label>
+          <div class="bubble-shape-grid">
+            <button class="bubble-shape-btn" data-shape="rounded">Rounded</button>
+            <button class="bubble-shape-btn" data-shape="square">Square</button>
+            <button class="bubble-shape-btn" data-shape="pill">Pill</button>
+          </div>
+        </div>
+        <button class="btn btn-primary full" id="save-theme-btn">Save look</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Emoji picker -->
+  <div class="popover" id="emoji-popover" aria-hidden="true">
+    <div class="emoji-grid" id="emoji-grid"></div>
+  </div>
+
+  <!-- Message action menu -->
+  <div class="popover msg-menu" id="msg-menu" aria-hidden="true">
+    <button data-act="reply"><svg viewBox="0 0 24 24"><path d="M9 7l-5 5 5 5M4 12h11a5 5 0 015 5v2" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg> Reply</button>
+    <button data-act="react"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" fill="none"/><circle cx="9" cy="10" r="1" fill="currentColor"/><circle cx="15" cy="10" r="1" fill="currentColor"/><path d="M8.5 14.5c1 1.2 2.2 1.8 3.5 1.8s2.5-.6 3.5-1.8" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg> React</button>
+    <button data-act="copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.6" fill="none"/><rect x="4" y="4" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.6" fill="none"/></svg> Copy</button>
+    <button data-act="edit" class="own"><svg viewBox="0 0 24 24"><path d="M14 4l6 6-10 10H4v-6L14 4z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/></svg> Edit</button>
+    <button data-act="delete" class="own danger"><svg viewBox="0 0 24 24"><path d="M5 7h14M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2m-7 0v12a2 2 0 002 2h6a2 2 0 002-2V7" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg> Delete</button>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast"></div>
+
+  <!-- ============ FIREBASE (compat SDK) ============ -->
+  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+
+  <script src="firebase.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

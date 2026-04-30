@@ -1,1509 +1,1325 @@
-/* ============================================================
-   Orbit — SPA controller
-   ============================================================ */
-import {
-  watchAuth, signUp, signIn, signInGoogle, signOutUser,
-  getUserProfile, getUserByHandle, updateMyProfile, ensureUserProfile,
-  uploadToCloudinary, grantBeacon,
-  createBeam, listenBeams, toggleGlow, deleteBeam,
-  getBeam, listenBeam, addEcho, listenEchoes,
-  createCircle, listenCircles, getCircle, joinCircle, leaveCircle,
-  openOrCreateDirectChat, listenMyChats, listenChat, listenMessages,
-  sendMessage, addReaction, updateChatSettings,
-  follow, unfollow, searchPeople,
-  createNotification, listenNotifications, markAllNotificationsRead,
-  auth, db
-} from "./firebase.js";
+/* =========================================================
+   Halo — app.js
+   Routing, views, interactions, customization
+   ========================================================= */
+(function () {
+  "use strict";
 
-/* ============================================================
-   GLOBAL STATE
-   ============================================================ */
-const state = {
-  user: null,        // firebase auth user
-  profile: null,     // firestore profile
-  route: null,
-  unsub: [],         // current screen listeners to clean up
-  cache: {
-    profilesByUid: new Map(),
-    profilesByHandle: new Map()
-  },
-  ui: {
-    composeOpen: false,
-    activeChatId: null,
-    activeReply: null,
-    notifBadge: 0,
-    chatBadge: 0
-  }
-};
-
-/* ============================================================
-   SMALL HELPERS
-   ============================================================ */
-const $ = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-const el = (tag, props = {}, children = []) => {
-  const node = document.createElement(tag);
-  Object.entries(props).forEach(([k, v]) => {
-    if (v == null || v === false) return;
-    if (k === "class") node.className = v;
-    else if (k === "html") node.innerHTML = v;
-    else if (k === "text") node.textContent = v;
-    else if (k === "data") Object.entries(v).forEach(([dk, dv]) => node.dataset[dk] = dv);
-    else if (k === "style") Object.assign(node.style, v);
-    else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2).toLowerCase(), v);
-    else node.setAttribute(k, v);
-  });
-  (Array.isArray(children) ? children : [children]).forEach(c => {
-    if (c == null || c === false) return;
-    node.append(c.nodeType ? c : document.createTextNode(String(c)));
-  });
-  return node;
-};
-const refreshIcons = () => window.lucide && window.lucide.createIcons();
-const escape = (s = "") => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-
-function timeAgo(ts) {
-  if (!ts) return "now";
-  const d = ts.toDate ? ts.toDate() : new Date(ts);
-  const s = Math.floor((Date.now() - d.getTime()) / 1000);
-  if (s < 5) return "just now";
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60); if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60); if (h < 24) return `${h}h`;
-  const dy = Math.floor(h / 24); if (dy < 7) return `${dy}d`;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-function dayLabel(ts) {
-  if (!ts) return "";
-  const d = ts.toDate ? ts.toDate() : new Date(ts);
-  const today = new Date(); today.setHours(0,0,0,0);
-  const that = new Date(d); that.setHours(0,0,0,0);
-  const diff = (today - that) / 86400000;
-  if (diff === 0) return "Today";
-  if (diff === 1) return "Yesterday";
-  return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
-}
-function initials(name = "") {
-  return name.split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0]?.toUpperCase()).join("") || "O";
-}
-
-/* ============================================================
-   THEME / ACCENT
-   ============================================================ */
-const ACCENTS = {
-  violet: { h: 258, s: 90, l: 76, h2: 190, s2: 90, l2: 70 },
-  cyan:   { h: 190, s: 90, l: 70, h2: 258, s2: 90, l2: 76 },
-  rose:   { h: 340, s: 88, l: 72, h2: 28,  s2: 92, l2: 68 },
-  amber:  { h: 38,  s: 92, l: 64, h2: 14,  s2: 88, l2: 64 },
-  mint:   { h: 158, s: 70, l: 62, h2: 188, s2: 78, l2: 62 },
-  indigo: { h: 240, s: 84, l: 70, h2: 282, s2: 80, l2: 72 }
-};
-function applyAccent(name) {
-  const a = ACCENTS[name] || ACCENTS.violet;
-  document.documentElement.style.setProperty("--accent", `${a.h} ${a.s}% ${a.l}%`);
-  document.documentElement.style.setProperty("--accent-2", `${a.h2} ${a.s2}% ${a.l2}%`);
-  document.documentElement.style.setProperty("--accent-soft", `${a.h} ${a.s}% ${a.l}% / 0.16`);
-  localStorage.setItem("orbit:accent", name);
-}
-function applyTheme(theme) {
-  const t = theme === "system"
-    ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-    : (theme || "dark");
-  document.documentElement.setAttribute("data-theme", t);
-  localStorage.setItem("orbit:theme", theme || "dark");
-  // sync any visible quick-toggle icons
-  document.querySelectorAll('[data-theme-toggle]').forEach(btn => {
-    const icon = btn.querySelector('i');
-    if (icon) {
-      icon.setAttribute("data-lucide", t === "dark" ? "sun" : "moon");
-      btn.title = t === "dark" ? "Switch to light mode" : "Switch to dark mode";
+  /* ============ tiny helpers ============ */
+  const $  = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const el = (tag, attrs = {}, children = []) => {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (v == null || v === false) continue;
+      if (k === "class") node.className = v;
+      else if (k === "html") node.innerHTML = v;
+      else if (k === "text") node.textContent = v;
+      else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2).toLowerCase(), v);
+      else if (k === "style" && typeof v === "object") Object.assign(node.style, v);
+      else if (v === true) node.setAttribute(k, "");
+      else node.setAttribute(k, v);
     }
-  });
-  refreshIcons && refreshIcons();
-}
-function toggleTheme() {
-  const current = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
-  applyTheme(current === "dark" ? "light" : "dark");
-}
-applyTheme(localStorage.getItem("orbit:theme") || "dark");
-applyAccent(localStorage.getItem("orbit:accent") || "violet");
-
-/* ============================================================
-   TOASTS
-   ============================================================ */
-function toast(message, kind = "info", icon = "sparkles") {
-  const node = el("div", { class: `toast ${kind}` }, [
-    el("i", { "data-lucide": icon }), message
-  ]);
-  $("#toasts").append(node);
-  refreshIcons();
-  setTimeout(() => { node.classList.add("fade"); setTimeout(() => node.remove(), 250); }, 2400);
-}
-
-/* ============================================================
-   MODAL / SHEET / CTX MENU
-   ============================================================ */
-function openModal({ title, body, footer }) {
-  const root = $("#modal-root");
-  root.innerHTML = "";
-  const close = () => { root.classList.remove("is-open"); root.innerHTML = ""; };
-  const backdrop = el("div", { class: "modal-backdrop", onClick: close });
-  const head = el("div", { class: "modal-head" }, [
-    el("h2", { text: title || "" }),
-    el("button", { class: "modal-close", "aria-label": "Close", onClick: close }, [el("i", { "data-lucide": "x" })])
-  ]);
-  const modal = el("div", { class: "modal" }, [head, body, footer].filter(Boolean));
-  root.append(backdrop, modal);
-  root.classList.add("is-open");
-  refreshIcons();
-  return close;
-}
-function openSheet({ body }) {
-  const root = $("#sheet-root");
-  root.innerHTML = "";
-  const close = () => { root.classList.remove("is-open"); root.innerHTML = ""; };
-  const backdrop = el("div", { class: "sheet-backdrop", onClick: close });
-  const sheet = el("div", { class: "sheet" }, [el("div", { class: "sheet-handle" }), body]);
-  root.append(backdrop, sheet);
-  root.classList.add("is-open");
-  refreshIcons();
-  return close;
-}
-function openCtx(x, y, items) {
-  const root = $("#ctx-root");
-  root.innerHTML = "";
-  const close = () => { root.classList.remove("is-open"); root.innerHTML = ""; };
-  const backdrop = el("div", { class: "modal-backdrop", style: { background: "transparent" }, onClick: close });
-  const menu = el("div", { class: "ctx" });
-  items.forEach(it => {
-    if (!it) return;
-    menu.append(el("button", {
-      class: it.danger ? "danger" : "",
-      onClick: () => { close(); it.onClick && it.onClick(); }
-    }, [el("i", { "data-lucide": it.icon || "circle" }), it.label]));
-  });
-  // position
-  const w = 200, h = items.length * 38 + 8;
-  menu.style.left = Math.min(x, window.innerWidth - w - 10) + "px";
-  menu.style.top  = Math.min(y, window.innerHeight - h - 10) + "px";
-  root.append(backdrop, menu);
-  root.classList.add("is-open");
-  refreshIcons();
-}
-
-/* ============================================================
-   AUTH SCREEN
-   ============================================================ */
-function setupAuthScreen() {
-  let mode = "signin";
-  const screen = $("#auth-screen");
-  const form = $("#auth-form");
-  const errEl = $("#auth-error");
-  const submitBtn = $("#auth-submit");
-  const submitLabel = $(".btn-label", submitBtn);
-  const spinner = $(".btn-spinner", submitBtn);
-  const setMode = (m) => {
-    mode = m;
-    $$('.auth-tab').forEach(t => t.classList.toggle("is-active", t.dataset.authTab === m));
-    screen.classList.toggle("is-signup", m === "signup");
-    submitLabel.textContent = m === "signup" ? "Create account" : "Sign in";
-    errEl.textContent = "";
+    (Array.isArray(children) ? children : [children]).forEach((c) => {
+      if (c == null || c === false) return;
+      if (typeof c === "string") node.appendChild(document.createTextNode(c));
+      else node.appendChild(c);
+    });
+    return node;
   };
-  $$('.auth-tab').forEach(t => t.addEventListener("click", () => setMode(t.dataset.authTab)));
+  const escapeHtml = (s = "") => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const fmtTime = (ts) => {
+    if (!ts) return "";
+    const d = new Date(ts.seconds ? ts.seconds * 1000 : ts);
+    const now = Date.now();
+    const diff = (now - d.getTime()) / 1000;
+    if (diff < 60) return "just now";
+    if (diff < 3600) return Math.floor(diff / 60) + "m";
+    if (diff < 86400) return Math.floor(diff / 3600) + "h";
+    if (diff < 86400 * 7) return Math.floor(diff / 86400) + "d";
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  };
+  const fmtClock = (ts) => {
+    const d = new Date(ts.seconds ? ts.seconds * 1000 : ts);
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  };
+  const fmtDay = (ts) => {
+    const d = new Date(ts.seconds ? ts.seconds * 1000 : ts);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const yest  = new Date(today); yest.setDate(yest.getDate() - 1);
+    const that  = new Date(d); that.setHours(0, 0, 0, 0);
+    if (that.getTime() === today.getTime()) return "Today";
+    if (that.getTime() === yest.getTime())  return "Yesterday";
+    return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  };
+  const sameDay = (a, b) => {
+    const da = new Date(a.seconds ? a.seconds * 1000 : a);
+    const db = new Date(b.seconds ? b.seconds * 1000 : b);
+    return da.toDateString() === db.toDateString();
+  };
 
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    errEl.textContent = "";
-    submitBtn.disabled = true; spinner.classList.remove("hidden"); submitLabel.classList.add("hidden");
-    try {
-      if (mode === "signup") {
-        await signUp({
-          email: $("#auth-email").value.trim(),
-          password: $("#auth-pass").value,
-          displayName: $("#auth-name").value.trim() || "Orbiter",
-          handle: ($("#auth-handle").value.trim() || "").toLowerCase().replace(/[^a-z0-9_]/g, "")
+  /* ============ THEME ============ */
+  const Theme = {
+    set(mode) {
+      document.documentElement.setAttribute("data-theme", mode);
+      localStorage.setItem("halo.theme", mode);
+    },
+    toggle() {
+      const cur = document.documentElement.getAttribute("data-theme") || "dark";
+      Theme.set(cur === "dark" ? "light" : "dark");
+    },
+    init() {
+      const saved = localStorage.getItem("halo.theme");
+      if (saved) Theme.set(saved);
+      else {
+        const prefersLight = window.matchMedia("(prefers-color-scheme: light)").matches;
+        Theme.set(prefersLight ? "light" : "dark");
+      }
+    }
+  };
+  Theme.init();
+
+  /* ============ TOAST ============ */
+  const Toast = (msg, ms = 2200) => {
+    const t = $("#toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(Toast._t);
+    Toast._t = setTimeout(() => t.classList.remove("show"), ms);
+  };
+
+  /* ============ STATE ============ */
+  const State = {
+    user: null,
+    users: [],
+    usersById: {},
+    beams: [],
+    rooms: [],
+    activeRoom: null,
+    pendingReply: null,
+    pendingImage: null,
+    streamScroll: 0
+  };
+  function refreshUserMap() {
+    State.usersById = {};
+    State.users.forEach((u) => { State.usersById[u.uid] = u; });
+    if (State.user) State.usersById[State.user.uid] = State.user;
+  }
+  function userOf(uid) { return State.usersById[uid] || { displayName: "Someone", handle: "?", photoURL: null, halo: false, uid }; }
+
+  /* ============ ROUTER (hash) ============ */
+  const Router = {
+    routes: {},
+    on(path, handler) { this.routes[path] = handler; return this; },
+    onMatch(re, handler) { (this._regex = this._regex || []).push({ re, handler }); return this; },
+    go(path) { window.location.hash = "#" + path; },
+    current() { return window.location.hash.replace(/^#/, "") || "/"; },
+    handle() {
+      const path = this.current();
+      // mark active nav
+      $$(".nav-item, .bn-item").forEach((n) => {
+        const r = n.getAttribute("data-route");
+        if (!r) return;
+        n.classList.toggle("active", r === path || (r !== "/" && path.startsWith(r)));
+      });
+      if (path === "/") {
+        $$(".nav-item, .bn-item").forEach((n) => n.classList.toggle("active", n.getAttribute("data-route") === "/"));
+      }
+      if (this.routes[path]) return this.routes[path]();
+      for (const { re, handler } of this._regex || []) {
+        const m = path.match(re);
+        if (m) return handler(...m.slice(1));
+      }
+      this.routes["/"] && this.routes["/"]();
+    }
+  };
+  window.addEventListener("hashchange", () => Router.handle());
+
+  /* ============ AVATAR / BADGES helpers ============ */
+  function avatarHTML(u, size = "") {
+    const img = u && u.photoURL
+      ? `<img class="avatar ${size}" src="${u.photoURL}" alt="" />`
+      : `<div class="avatar ${size}" style="display:grid;place-items:center;font-weight:700;color:var(--gold);background:var(--gold-soft);">${(u && u.displayName ? u.displayName[0] : "?").toUpperCase()}</div>`;
+    const wrapClass = "avatar-wrap" + (u && u.halo ? " haloed" : "");
+    return `<span class="${wrapClass}">${img}</span>`;
+  }
+  const haloBadge = (u) => (u && u.halo) ? `<span class="halo-badge" title="Halo'd"></span>` : "";
+
+  /* ============ AUTH FLOW ============ */
+  function bindAuthUI() {
+    const tabs = $$(".auth-tab");
+    const ind = $(".auth-tabs");
+    const form = $("#auth-form");
+    let mode = "signin";
+    tabs.forEach((t) => {
+      t.addEventListener("click", () => {
+        mode = t.dataset.mode;
+        tabs.forEach((x) => x.classList.toggle("active", x === t));
+        ind.dataset.mode = mode;
+        form.dataset.mode = mode;
+        $("#auth-error").textContent = "";
+      });
+    });
+    form.dataset.mode = "signin";
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = $("#auth-email").value.trim();
+      const pass  = $("#auth-pass").value;
+      const name  = $("#auth-name").value.trim() || email.split("@")[0];
+      const submit = $(".auth-submit");
+      submit.classList.add("loading");
+      $("#auth-error").textContent = "";
+      try {
+        if (mode === "signup") await Halo.auth.signUp(email, pass, name);
+        else await Halo.auth.signIn(email, pass);
+      } catch (err) {
+        $("#auth-error").textContent = (err && err.message) || "Couldn't continue.";
+      } finally {
+        submit.classList.remove("loading");
+      }
+    });
+  }
+
+  /* ============ MOUNT helpers ============ */
+  const View = $("#view");
+  function mount(node) {
+    View.innerHTML = "";
+    View.appendChild(node);
+    window.scrollTo(0, 0);
+  }
+  function showSkeleton(count = 3) {
+    const wrap = el("div", { class: "page" }, [
+      el("div", { class: "page-head" }, [
+        el("div", {}, [el("h1", { class: "page-title", text: "Loading…" })])
+      ])
+    ]);
+    for (let i = 0; i < count; i++) wrap.appendChild(el("div", { class: "skeleton skel-beam" }));
+    mount(wrap);
+  }
+
+  /* ============ STREAM PAGE ============ */
+  let beamsUnsub = null;
+  function renderStream() {
+    showSkeleton(3);
+    const me = State.user;
+
+    const page = el("div", { class: "page stream-page" });
+    const head = el("div", { class: "page-head" }, [
+      el("div", {}, [
+        el("h1", { class: "page-title", text: "Stream" }),
+        el("p", { class: "page-sub", text: "Beams from people in your Orbit." })
+      ]),
+      el("button", {
+        class: "refresh-btn",
+        onclick: async (e) => {
+          e.currentTarget.classList.add("spinning");
+          State.beams = await Halo.beams.list();
+          drawStream();
+          setTimeout(() => e.currentTarget.classList.remove("spinning"), 600);
+          Toast("Stream refreshed");
+        },
+        html: `<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg> Refresh`
+      })
+    ]);
+    const stream = el("div", { class: "stream", id: "stream-list" });
+    page.appendChild(head); page.appendChild(stream);
+
+    function drawStream() {
+      stream.innerHTML = "";
+      if (!State.beams.length) {
+        stream.appendChild(el("div", { class: "empty", html:
+          `<div class="empty-icon"><svg viewBox="0 0 24 24"><path d="M12 2v6m0 8v6M2 12h6m8 0h6M5 5l4 4m6 6l4 4M5 19l4-4m6-6l4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>
+           <h3>Your Stream is quiet for now.</h3>
+           <p>Add someone to your Orbit to see their Beams here.</p>`
+        }));
+        return;
+      }
+      State.beams.forEach((b, i) => {
+        if (i > 0) stream.appendChild(el("div", { class: "beam-sep" }));
+        stream.appendChild(beamCard(b));
+      });
+    }
+
+    function beamCard(b) {
+      const author = userOf(b.authorId);
+      const sparkedByMe = (b.sparks || []).includes(me.uid);
+      const card = el("article", { class: "beam", "data-beam": b.id });
+
+      // head
+      const head = el("div", { class: "beam-head" });
+      head.innerHTML = `
+        ${avatarHTML(author)}
+        <div class="beam-author">
+          <div class="beam-author-line">
+            <span class="beam-author-name">${escapeHtml(author.displayName)}</span>
+            ${haloBadge(author)}
+            <span class="beam-handle">@${escapeHtml(author.handle || "you")}</span>
+            <span class="beam-time">· ${fmtTime(b.createdAt)}</span>
+          </div>
+        </div>
+      `;
+      card.appendChild(head);
+
+      // text
+      if (b.text) card.appendChild(el("div", { class: "beam-text", text: b.text }));
+      // image
+      if (b.image) {
+        const img = el("img", { class: "beam-image", src: b.image, alt: "", loading: "lazy" });
+        img.addEventListener("click", () => window.open(b.image, "_blank"));
+        card.appendChild(img);
+      }
+
+      // actions
+      const sparkBtn = el("button", { class: "action-btn" + (sparkedByMe ? " sparked" : "") });
+      sparkBtn.innerHTML = `
+        <svg class="spark-ic" viewBox="0 0 24 24"><path d="M12 2.5l2.5 6 6.5.5-5 4.3 1.6 6.4L12 16.7 6.4 19.7 8 13.3 3 9l6.5-.5L12 2.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="${sparkedByMe ? "currentColor" : "none"}"/></svg>
+        <span>${(b.sparks || []).length || ""}</span> Spark`;
+      sparkBtn.addEventListener("click", async () => {
+        const sparks = b.sparks || [];
+        const i = sparks.indexOf(me.uid);
+        if (i >= 0) sparks.splice(i, 1); else sparks.push(me.uid);
+        b.sparks = sparks;
+        const idx = State.beams.findIndex((x) => x.id === b.id);
+        if (idx >= 0) State.beams[idx] = b;
+        // optimistic re-render of just this card
+        card.replaceWith(beamCard(b));
+        await Halo.beams.toggleSpark(b.id, me.uid);
+      });
+
+      const commentBtn = el("button", { class: "action-btn" });
+      commentBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4V5z" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linejoin="round"/></svg><span>${(b.comments || []).length || ""}</span> Reply`;
+      commentBtn.addEventListener("click", () => commentsBox.classList.toggle("open"));
+
+      const shareBtn = el("button", { class: "action-btn" });
+      shareBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M4 12v7a1 1 0 001 1h14a1 1 0 001-1v-7M16 6l-4-4-4 4M12 2v14" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg> Share`;
+      shareBtn.addEventListener("click", async () => {
+        const url = window.location.origin + window.location.pathname + "#/?beam=" + b.id;
+        try { await navigator.clipboard.writeText(url); Toast("Link copied"); } catch { Toast("Couldn't copy"); }
+      });
+
+      const actions = el("div", { class: "beam-actions" }, [sparkBtn, commentBtn, shareBtn]);
+      card.appendChild(actions);
+
+      // comments
+      const commentsBox = el("div", { class: "comments" });
+      (b.comments || []).forEach((c) => commentsBox.appendChild(commentNode(c)));
+      const cf = el("form", { class: "comment-form" });
+      const cinput = el("input", { type: "text", placeholder: "Write a reply…" });
+      const cbtn = el("button", { type: "submit", text: "Send" });
+      cf.appendChild(cinput); cf.appendChild(cbtn);
+      cf.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const text = cinput.value.trim();
+        if (!text) return;
+        cinput.value = "";
+        const optimistic = { id: "opt" + Date.now(), authorId: me.uid, text, createdAt: Date.now() };
+        commentsBox.insertBefore(commentNode(optimistic), cf);
+        const saved = await Halo.beams.addComment(b.id, { authorId: me.uid, text });
+        b.comments = b.comments || [];
+        b.comments.push(saved);
+      });
+      commentsBox.appendChild(cf);
+      card.appendChild(commentsBox);
+      return card;
+    }
+
+    function commentNode(c) {
+      const a = userOf(c.authorId);
+      const node = el("div", { class: "comment" });
+      node.innerHTML = `
+        ${avatarHTML(a, "sm")}
+        <div class="comment-body">
+          <div class="comment-author">${escapeHtml(a.displayName)} ${haloBadge(a)}</div>
+          <div class="comment-text">${escapeHtml(c.text)}</div>
+        </div>
+      `;
+      return node;
+    }
+
+    // Initial mount once first data arrives
+    setTimeout(() => {
+      mount(page);
+      drawStream();
+      // restore scroll
+      if (State.streamScroll) window.scrollTo(0, State.streamScroll);
+    }, 280);
+
+    // Subscribe to live updates
+    if (beamsUnsub) beamsUnsub();
+    beamsUnsub = Halo.beams.subscribe((list) => {
+      State.beams = list;
+      drawStream();
+    });
+  }
+
+  // remember scroll on the stream page
+  window.addEventListener("scroll", () => {
+    if (Router.current() === "/") State.streamScroll = window.scrollY;
+  }, { passive: true });
+
+  /* ============ LOOPS PAGE ============ */
+  async function renderLoops() {
+    showSkeleton(1);
+    const loops = await Halo.loops.list();
+    const wrap = el("div", { class: "loops-wrap" });
+    let muted = true;
+
+    loops.forEach((loop) => {
+      const author = userOf(loop.authorId);
+      const sparkedByMe = (loop.sparks || []).includes(State.user.uid);
+      const node = el("section", { class: "loop", "data-loop": loop.id });
+      const video = el("video", {
+        src: loop.videoUrl,
+        poster: loop.posterUrl || "",
+        muted: true,
+        loop: true,
+        playsinline: "",
+        preload: "metadata"
+      });
+      node.appendChild(video);
+      node.appendChild(el("div", { class: "loop-overlay" }));
+
+      const back = el("button", { class: "loop-mobile-back", onclick: () => Router.go("/"), html: `<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>` });
+      node.appendChild(back);
+
+      const meta = el("div", { class: "loop-meta" });
+      meta.innerHTML = `
+        <div class="loop-author">${avatarHTML(author, "sm")} <div><div class="loop-author-name">${escapeHtml(author.displayName)} ${haloBadge(author)}</div><div style="font-size:12px;opacity:.8">@${escapeHtml(author.handle)}</div></div></div>
+        <div class="loop-caption">${escapeHtml(loop.caption || "")}</div>`;
+      node.appendChild(meta);
+
+      const sparkAct = el("div", { class: "loop-action" + (sparkedByMe ? " sparked" : "") });
+      sparkAct.innerHTML = `<button><svg viewBox="0 0 24 24"><path d="M12 2.5l2.5 6 6.5.5-5 4.3 1.6 6.4L12 16.7 6.4 19.7 8 13.3 3 9l6.5-.5L12 2.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="${sparkedByMe ? "currentColor" : "none"}"/></svg></button><span>${(loop.sparks || []).length}</span>`;
+      sparkAct.querySelector("button").addEventListener("click", async () => {
+        await Halo.loops.toggleSpark(loop.id, State.user.uid);
+        const i = (loop.sparks || []).indexOf(State.user.uid);
+        if (i >= 0) loop.sparks.splice(i, 1); else (loop.sparks = loop.sparks || []).push(State.user.uid);
+        const next = sparkAct.cloneNode(false);
+        next.classList.toggle("sparked", loop.sparks.includes(State.user.uid));
+        next.innerHTML = `<button><svg viewBox="0 0 24 24"><path d="M12 2.5l2.5 6 6.5.5-5 4.3 1.6 6.4L12 16.7 6.4 19.7 8 13.3 3 9l6.5-.5L12 2.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="${loop.sparks.includes(State.user.uid) ? "currentColor" : "none"}"/></svg></button><span>${loop.sparks.length}</span>`;
+        sparkAct.replaceWith(next);
+        next.querySelector("button").addEventListener("click", sparkAct.querySelector("button").onclick);
+      });
+
+      const commentAct = el("div", { class: "loop-action" });
+      commentAct.innerHTML = `<button><svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4V5z" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linejoin="round"/></svg></button><span>Reply</span>`;
+      commentAct.querySelector("button").addEventListener("click", () => Toast("Loop replies coming soon"));
+
+      const shareAct = el("div", { class: "loop-action" });
+      shareAct.innerHTML = `<button><svg viewBox="0 0 24 24"><path d="M4 12v7a1 1 0 001 1h14a1 1 0 001-1v-7M16 6l-4-4-4 4M12 2v14" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button><span>Share</span>`;
+      shareAct.querySelector("button").addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(window.location.href); Toast("Link copied"); } catch {}
+      });
+
+      const followAct = el("div", { class: "loop-action" });
+      followAct.innerHTML = `<button><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button><span>Orbit</span>`;
+      followAct.querySelector("button").addEventListener("click", async () => {
+        const inOrbit = await Halo.users.toggleOrbit(State.user.uid, loop.authorId);
+        Toast(inOrbit ? "Added to your Orbit" : "Removed from your Orbit");
+      });
+
+      const actions = el("div", { class: "loop-actions" }, [sparkAct, commentAct, shareAct, followAct]);
+      node.appendChild(actions);
+
+      const muteBtn = el("button", { class: "loop-mute" });
+      const setMuteIcon = () => {
+        muteBtn.innerHTML = muted
+          ? `<svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4V5zM18 9l4 6m0-6l-4 6" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+          : `<svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4V5z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/><path d="M16 9c1.5 1.5 1.5 4.5 0 6M19 6c3 3 3 9 0 12" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>`;
+      };
+      setMuteIcon();
+      muteBtn.addEventListener("click", () => {
+        muted = !muted;
+        wrap.querySelectorAll("video").forEach((v) => (v.muted = muted));
+        $$(".loop-mute", wrap).forEach((b) => b.replaceWith(muteBtn.cloneNode(true)));
+        $$(".loop-mute", wrap).forEach((b) => b.addEventListener("click", muteBtn.onclick));
+        setMuteIcon();
+      });
+      muteBtn.onclick = muteBtn.onclick || (() => {});
+      node.appendChild(muteBtn);
+
+      // Tap video to toggle play
+      video.addEventListener("click", () => video.paused ? video.play() : video.pause());
+      wrap.appendChild(node);
+    });
+
+    mount(wrap);
+
+    // IntersectionObserver autoplay
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        const v = e.target.querySelector("video");
+        if (!v) return;
+        if (e.isIntersecting && e.intersectionRatio > 0.6) {
+          v.muted = muted; v.play().catch(() => {});
+        } else {
+          v.pause();
+        }
+      });
+    }, { root: wrap, threshold: [0, 0.6, 1] });
+    $$(".loop", wrap).forEach((n) => io.observe(n));
+  }
+
+  /* ============ ROOMS LIST ============ */
+  let roomsUnsub = null;
+  function renderRooms() {
+    showSkeleton(2);
+    const page = el("div", { class: "page rooms-page" });
+    const head = el("div", { class: "page-head" }, [
+      el("div", {}, [
+        el("h1", { class: "page-title", text: "Rooms" }),
+        el("p", { class: "page-sub", text: "Conversations that breathe." })
+      ]),
+      el("button", {
+        class: "btn btn-soft",
+        onclick: () => openCreateRoom(),
+        html: `<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> New room`
+      })
+    ]);
+    const list = el("div", { class: "rooms-list", id: "rooms-list" });
+    page.appendChild(head); page.appendChild(list);
+
+    function draw(rooms) {
+      list.innerHTML = "";
+      if (!rooms.length) {
+        list.replaceWith(el("div", { class: "empty", html:
+          `<div class="empty-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4V5z" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linejoin="round"/></svg></div>
+           <h3>No rooms yet.</h3>
+           <p>Start a Room to begin a conversation.</p>`
+        }));
+        return;
+      }
+      // pinned first
+      rooms.sort((a, b) => (b.pinned - a.pinned) || ((b.lastAt || 0) - (a.lastAt || 0)));
+      rooms.forEach((r) => {
+        const isDM = r.memberIds.length === 2;
+        const otherUid = isDM ? r.memberIds.find((u) => u !== State.user.uid) : null;
+        const other = otherUid ? userOf(otherUid) : null;
+        const cover = isDM
+          ? avatarHTML(other)
+          : (r.cover ? `<img src="${r.cover}" alt="" />` : `<span>${r.emoji || "✨"}</span>`);
+        const lastUser = r.messages && r.messages.length ? userOf(r.messages[r.messages.length - 1].authorId) : null;
+        const lastPrefix = lastUser ? (lastUser.uid === State.user.uid ? "You: " : (isDM ? "" : `${lastUser.displayName.split(" ")[0]}: `)) : "";
+        const row = el("div", { class: "room-row", onclick: () => Router.go("/rooms/" + r.id) });
+        row.innerHTML = `
+          <div class="room-cover">${cover}</div>
+          <div class="room-info">
+            <div class="room-line1">
+              <div class="room-name">${escapeHtml(isDM ? (other ? other.displayName : r.name) : r.name)} ${isDM ? haloBadge(other) : ""} ${r.pinned ? `<svg class="room-pin" viewBox="0 0 24 24"><path d="M12 2v8l4 4-2 2v6m0-12L8 8" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>` : ""}</div>
+              <div class="room-time">${fmtTime(r.lastAt || r.createdAt)}</div>
+            </div>
+            <div class="room-line2">
+              <div class="room-preview">${escapeHtml(lastPrefix + (r.lastMessage || "Quiet so far…"))}</div>
+            </div>
+          </div>`;
+        list.appendChild(row);
+      });
+    }
+
+    setTimeout(() => mount(page), 200);
+    if (roomsUnsub) roomsUnsub();
+    roomsUnsub = Halo.rooms.subscribe(State.user.uid, (rooms) => {
+      State.rooms = rooms;
+      draw(rooms);
+    });
+  }
+
+  /* ============ ROOM (chat) ============ */
+  let roomOneUnsub = null;
+  let typingTimer = null;
+  function renderRoom(roomId) {
+    showSkeleton(2);
+    const me = State.user;
+
+    const view = el("div", { class: "room-view" });
+    const header = el("header", { class: "room-header" });
+    const messages = el("div", { class: "messages" });
+    const messagesInner = el("div", { class: "messages-inner" });
+    messages.appendChild(messagesInner);
+
+    const composer = el("div", { class: "composer" });
+    const composerInner = el("div", { class: "composer-inner" });
+    composer.appendChild(composerInner);
+
+    // composer reply preview
+    const cReply = el("div", { class: "composer-reply" });
+    const cReplyInfo = el("div", { class: "composer-reply-info" });
+    cReply.innerHTML = `
+      <svg viewBox="0 0 24 24" style="width:16px;height:16px;color:var(--gold)"><path d="M9 7l-5 5 5 5M4 12h11a5 5 0 015 5v2" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    cReply.appendChild(cReplyInfo);
+    const cReplyCancel = el("button", { class: "composer-reply-cancel", title: "Cancel reply (Esc)", html: `<svg viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>` });
+    cReply.appendChild(cReplyCancel);
+    cReplyCancel.addEventListener("click", () => { State.pendingReply = null; cReply.classList.remove("shown"); });
+    composerInner.appendChild(cReply);
+
+    // image preview
+    const imgPrev = el("div", { class: "composer-image-preview" });
+    composerInner.appendChild(imgPrev);
+
+    // composer row
+    const cRow = el("div", { class: "composer-row" });
+    const emojiBtn = el("button", { class: "composer-tool", title: "Emoji", html: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" fill="none"/><circle cx="9" cy="10" r="1" fill="currentColor"/><circle cx="15" cy="10" r="1" fill="currentColor"/><path d="M8.5 14.5c1 1.2 2.2 1.8 3.5 1.8s2.5-.6 3.5-1.8" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>` });
+    const attachBtn = el("button", { class: "composer-tool", title: "Attach image", html: `<svg viewBox="0 0 24 24"><path d="M14 6l-7.5 7.5a4 4 0 105.7 5.7L20 11" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>` });
+    const fileInput = el("input", { type: "file", accept: "image/*", style: { display: "none" } });
+    attachBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", async (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      const url = await Halo.uploadImage(f);
+      State.pendingImage = url;
+      imgPrev.classList.add("shown");
+      imgPrev.innerHTML = `<img src="${url}" alt="" /><button class="composer-image-cancel"><svg viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>`;
+      imgPrev.querySelector(".composer-image-cancel").addEventListener("click", () => {
+        State.pendingImage = null;
+        imgPrev.classList.remove("shown");
+        imgPrev.innerHTML = "";
+      });
+    });
+    const ta = el("textarea", { class: "composer-input", placeholder: "Write a message…", rows: "1" });
+    const sendBtn = el("button", { class: "composer-send", title: "Send", html: `<svg viewBox="0 0 24 24"><path d="M3 12l18-9-7 18-2-8-9-1z" stroke="currentColor" stroke-width="1.6" fill="currentColor" stroke-linejoin="round"/></svg>` });
+    cRow.appendChild(emojiBtn); cRow.appendChild(attachBtn); cRow.appendChild(ta); cRow.appendChild(sendBtn); cRow.appendChild(fileInput);
+    composerInner.appendChild(cRow);
+
+    // autoresize textarea
+    ta.addEventListener("input", () => {
+      ta.style.height = "auto";
+      ta.style.height = Math.min(140, ta.scrollHeight) + "px";
+    });
+
+    // Enter to send
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        send();
+      } else if (e.key === "Escape") {
+        State.pendingReply = null;
+        cReply.classList.remove("shown");
+      }
+    });
+
+    sendBtn.addEventListener("click", send);
+    async function send() {
+      const text = ta.value.trim();
+      if (!text && !State.pendingImage) return;
+      const payload = {
+        authorId: me.uid,
+        text,
+        image: State.pendingImage || null
+      };
+      if (State.pendingReply) payload.replyToId = State.pendingReply;
+      ta.value = ""; ta.style.height = "auto";
+      State.pendingImage = null; imgPrev.classList.remove("shown"); imgPrev.innerHTML = "";
+      State.pendingReply = null; cReply.classList.remove("shown");
+      // optimistic append
+      const optMsg = { ...payload, id: "opt" + Date.now(), reactions: [], status: "sent", createdAt: Date.now() };
+      State.activeRoom.messages.push(optMsg);
+      drawMessages(State.activeRoom);
+      scrollToBottom();
+      const saved = await Halo.rooms.sendMessage(roomId, payload);
+      // replace opt id
+      const idx = State.activeRoom.messages.findIndex((m) => m.id === optMsg.id);
+      if (idx >= 0) State.activeRoom.messages[idx] = saved;
+    }
+
+    // emoji popover
+    emojiBtn.addEventListener("click", (e) => {
+      openEmojiPopover(emojiBtn, (em) => {
+        const start = ta.selectionStart, end = ta.selectionEnd;
+        ta.value = ta.value.slice(0, start) + em + ta.value.slice(end);
+        ta.selectionStart = ta.selectionEnd = start + em.length;
+        ta.focus();
+      });
+    });
+
+    composerInner.appendChild(cRow);
+
+    view.appendChild(header);
+    view.appendChild(messages);
+    view.appendChild(composer);
+    setTimeout(() => mount(view), 200);
+
+    function applyTheme(room) {
+      const t = room.theme || { wallpaper: "aurora", bubbleColor: "#e7c07b", bubbleShape: "rounded" };
+      view.setAttribute("data-wp", t.wallpaper);
+      view.setAttribute("data-shape", t.bubbleShape);
+      view.style.setProperty("--bubble-color", t.bubbleColor);
+      // calc readable fg color
+      const fg = pickReadable(t.bubbleColor);
+      view.style.setProperty("--bubble-color-fg", fg);
+    }
+
+    function drawHeader(room) {
+      const isDM = room.memberIds.length === 2;
+      const other = isDM ? userOf(room.memberIds.find((u) => u !== me.uid)) : null;
+      const title = isDM && other ? other.displayName : room.name;
+      const haloIc = isDM && other && other.halo ? haloBadge(other) : "";
+      const subtitle = isDM
+        ? (other ? `@${escapeHtml(other.handle)}` : "")
+        : `${room.memberIds.length} members`;
+      header.innerHTML = `
+        <button class="room-back" onclick="window.history.length > 1 ? history.back() : (window.location.hash='#/rooms')">
+          <svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="room-cover" style="width:38px;height:38px;font-size:18px">${isDM ? avatarHTML(other, "sm") : `<span>${room.emoji || "✨"}</span>`}</div>
+        <div class="room-header-info">
+          <div class="room-header-name">${escapeHtml(title)} ${haloIc}</div>
+          <div class="room-header-meta">${subtitle}</div>
+        </div>
+        <div class="room-header-actions">
+          <button class="icon-btn" title="Customize">
+            <svg viewBox="0 0 24 24"><path d="M3 21l3-1 11-11-2-2L4 18l-1 3z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/><path d="M14 7l3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
+        </div>`;
+      header.querySelector(".room-header-actions .icon-btn").addEventListener("click", () => openChatTheme(room));
+    }
+
+    function drawMessages(room) {
+      messagesInner.innerHTML = "";
+      let lastTs = 0;
+      let lastAuthor = null;
+      const msgs = room.messages || [];
+      msgs.forEach((m, i) => {
+        if (!sameDay(lastTs || m.createdAt, m.createdAt) || lastTs === 0) {
+          messagesInner.appendChild(el("div", { class: "msg-day", text: fmtDay(m.createdAt) }));
+          lastAuthor = null;
+        }
+        const isFirst = lastAuthor !== m.authorId;
+        messagesInner.appendChild(messageNode(m, room, isFirst));
+        lastAuthor = m.authorId;
+        lastTs = m.createdAt;
+      });
+      // typing
+      if (room._typing) {
+        const tp = userOf(room._typing);
+        const node = el("div", { class: "typing" });
+        node.innerHTML = `${avatarHTML(tp, "sm")}<div class="typing-bubble"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>`;
+        messagesInner.appendChild(node);
+      }
+    }
+
+    function messageNode(m, room, isFirst) {
+      const author = userOf(m.authorId);
+      const mine = m.authorId === me.uid;
+      const row = el("div", { class: "msg-row" + (mine ? " mine" : "") + (isFirst ? " first-in-group" : "") + (mine && m.status === "seen" ? " seen" : ""), "data-msg": m.id });
+      if (!mine) {
+        const wrap = el("span", { class: "msg-avatar-wrap", style: { width: "30px", height: "30px", flex: "0 0 auto" } });
+        if (author.photoURL) {
+          wrap.appendChild(el("img", { class: "msg-avatar", src: author.photoURL, alt: "" }));
+        } else {
+          const ph = el("span", { class: "msg-avatar", style: { display: "grid", placeItems: "center", borderRadius: "999px", background: "var(--gold-soft)", color: "var(--gold)", fontWeight: "700", fontSize: "12px" }, text: (author.displayName || "?")[0].toUpperCase() });
+          wrap.appendChild(ph);
+        }
+        row.appendChild(wrap);
+      } else {
+        row.appendChild(el("span", { class: "msg-avatar" }));
+      }
+
+      const stack = el("div", { class: "msg-stack" });
+      if (isFirst && !mine) stack.appendChild(el("div", { class: "msg-author", text: author.displayName }));
+
+      // bubble
+      const bubble = el("div", { class: "bubble" + (m.image ? " has-image" : "") });
+
+      // reply preview inside bubble
+      if (m.replyToId) {
+        const orig = (room.messages || []).find((x) => x.id === m.replyToId);
+        if (orig) {
+          const origAuthor = userOf(orig.authorId);
+          const rep = el("div", { class: "bubble-reply" });
+          rep.innerHTML = `
+            <div class="bubble-reply-author">${escapeHtml(origAuthor.displayName)}</div>
+            <div class="bubble-reply-text">${escapeHtml(orig.text || (orig.image ? "📷 Photo" : ""))}</div>`;
+          rep.addEventListener("click", () => jumpToMessage(orig.id));
+          bubble.appendChild(rep);
+        }
+      }
+
+      if (m.image) bubble.appendChild(el("img", { class: "bubble-image", src: m.image, alt: "", loading: "lazy" }));
+      if (m.text)  bubble.appendChild(el("div", { class: "msg-text", text: m.text }));
+
+      // long-press on touch / contextmenu / right-click → menu
+      let pressTimer = null;
+      const openMenu = (x, y) => openMsgMenu(x, y, m, room, mine);
+      bubble.addEventListener("contextmenu", (e) => { e.preventDefault(); openMenu(e.clientX, e.clientY); });
+      bubble.addEventListener("touchstart", (e) => {
+        pressTimer = setTimeout(() => {
+          const t = e.touches[0];
+          openMenu(t.clientX, t.clientY);
+        }, 480);
+      });
+      bubble.addEventListener("touchend",   () => clearTimeout(pressTimer));
+      bubble.addEventListener("touchmove",  () => clearTimeout(pressTimer));
+      bubble.addEventListener("dblclick",   () => { State.pendingReply = m.id; setReplyPreview(m); });
+
+      // hover quick action: small reply chip on hover (desktop only)
+      const quickBtn = el("button", {
+        class: "icon-btn",
+        title: "Reply",
+        style: { position: "absolute", top: "-14px", [mine ? "left" : "right"]: "-30px", width: "26px", height: "26px", borderRadius: "999px", background: "var(--bg-elev)", boxShadow: "var(--shadow-md)", opacity: "0", transition: "opacity .2s" }
+      });
+      quickBtn.innerHTML = `<svg viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M9 7l-5 5 5 5M4 12h11a5 5 0 015 5v2" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      quickBtn.addEventListener("click", (e) => { e.stopPropagation(); State.pendingReply = m.id; setReplyPreview(m); });
+      bubble.style.position = "relative";
+      bubble.appendChild(quickBtn);
+      bubble.addEventListener("mouseenter", () => { quickBtn.style.opacity = "1"; });
+      bubble.addEventListener("mouseleave", () => { quickBtn.style.opacity = "0"; });
+
+      stack.appendChild(bubble);
+
+      // reactions
+      if (m.reactions && m.reactions.length) {
+        const rx = el("div", { class: "msg-reactions" });
+        m.reactions.forEach((r) => {
+          const chip = el("button", { class: "msg-reaction" + (r.userIds.includes(me.uid) ? " mine" : ""), html: `<span>${r.emoji}</span><span>${r.userIds.length}</span>` });
+          chip.addEventListener("click", async () => { await Halo.rooms.toggleReaction(roomId, m.id, r.emoji, me.uid); });
+          rx.appendChild(chip);
+        });
+        stack.appendChild(rx);
+      }
+
+      // meta
+      const meta = el("div", { class: "msg-meta" });
+      meta.innerHTML = `${m.editedAt ? `<span class="msg-edited">edited · </span>` : ""}<span>${fmtClock(m.createdAt)}</span>` + (mine ? ` <span class="msg-ticks">${ticksSvg(m.status)}</span>` : "");
+      stack.appendChild(meta);
+
+      row.appendChild(stack);
+      return row;
+    }
+
+    function ticksSvg(status) {
+      if (status === "sent")
+        return `<svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      if (status === "delivered" || status === "seen")
+        return `<svg viewBox="0 0 24 24"><path d="M2 13l5 5L18 7M9 13l5 5L24 7" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      return `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>`;
+    }
+
+    function setReplyPreview(m) {
+      const author = userOf(m.authorId);
+      cReplyInfo.innerHTML = `
+        <div class="composer-reply-author">Replying to ${escapeHtml(author.displayName)}</div>
+        <div class="composer-reply-text">${escapeHtml(m.text || (m.image ? "📷 Photo" : ""))}</div>`;
+      cReply.classList.add("shown");
+      ta.focus();
+    }
+
+    function jumpToMessage(id) {
+      const node = messagesInner.querySelector(`[data-msg="${CSS.escape(id)}"]`);
+      if (!node) return;
+      node.scrollIntoView({ behavior: "smooth", block: "center" });
+      node.classList.add("flash");
+      setTimeout(() => node.classList.remove("flash"), 1500);
+    }
+
+    function scrollToBottom(smooth = true) {
+      messages.scrollTo({ top: messages.scrollHeight + 999, behavior: smooth ? "smooth" : "auto" });
+    }
+
+    // subscribe
+    if (roomOneUnsub) roomOneUnsub();
+    roomOneUnsub = Halo.rooms.subscribeOne(roomId, (room) => {
+      if (!room) return;
+      State.activeRoom = room;
+      applyTheme(room);
+      drawHeader(room);
+      drawMessages(room);
+      // scroll on first paint
+      if (!view._firstPaint) {
+        view._firstPaint = true;
+        setTimeout(() => scrollToBottom(false), 60);
+      } else {
+        // if we're already near bottom, snap to it
+        const nearBottom = messages.scrollTop + messages.clientHeight + 200 > messages.scrollHeight;
+        if (nearBottom) scrollToBottom();
+      }
+    });
+
+    // expose for menu
+    view._jumpToMessage = jumpToMessage;
+    view._setReplyPreview = setReplyPreview;
+  }
+
+  function pickReadable(hex) {
+    if (!hex || hex[0] !== "#") return "#1a140a";
+    const c = hex.slice(1);
+    const r = parseInt(c.substring(0, 2), 16);
+    const g = parseInt(c.substring(2, 4), 16);
+    const b = parseInt(c.substring(4, 6), 16);
+    const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+    return yiq >= 160 ? "#1a140a" : "#fff7e8";
+  }
+
+  /* ============ MESSAGE MENU ============ */
+  function openMsgMenu(x, y, m, room, mine) {
+    const menu = $("#msg-menu");
+    menu.classList.toggle("is-mine", !!mine);
+
+    // Build quick-react row at top (rebuild every open)
+    let quick = menu.querySelector(".msg-quick-react");
+    if (quick) quick.remove();
+    quick = el("div", { class: "msg-quick-react" });
+    ["❤️", "🔥", "😂", "😮", "💛", "🙏"].forEach((em) => {
+      const b = el("button", { text: em });
+      b.addEventListener("click", async () => {
+        await Halo.rooms.toggleReaction(room.id, m.id, em, State.user.uid);
+        closeMsgMenu();
+      });
+      quick.appendChild(b);
+    });
+    menu.insertBefore(quick, menu.firstChild);
+
+    // wire actions
+    menu.querySelector('[data-act="reply"]').onclick = () => {
+      State.pendingReply = m.id;
+      const view = $(".room-view");
+      if (view && view._setReplyPreview) view._setReplyPreview(m);
+      closeMsgMenu();
+    };
+    menu.querySelector('[data-act="react"]').onclick = (e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      openEmojiPopover(e.currentTarget, async (em) => {
+        await Halo.rooms.toggleReaction(room.id, m.id, em, State.user.uid);
+      });
+      closeMsgMenu();
+    };
+    menu.querySelector('[data-act="copy"]').onclick = async () => {
+      try { await navigator.clipboard.writeText(m.text || ""); Toast("Copied"); } catch {}
+      closeMsgMenu();
+    };
+    menu.querySelector('[data-act="edit"]').onclick = async () => {
+      const next = prompt("Edit message", m.text || "");
+      if (next != null && next.trim() !== m.text) await Halo.rooms.editMessage(room.id, m.id, next.trim());
+      closeMsgMenu();
+    };
+    menu.querySelector('[data-act="delete"]').onclick = async () => {
+      if (confirm("Delete this message?")) await Halo.rooms.deleteMessage(room.id, m.id);
+      closeMsgMenu();
+    };
+
+    // position
+    menu.classList.add("open");
+    menu.style.left = "0px"; menu.style.top = "0px";
+    const rect = menu.getBoundingClientRect();
+    const px = Math.min(x, window.innerWidth - rect.width - 12);
+    const py = Math.min(y, window.innerHeight - rect.height - 12);
+    menu.style.left = px + "px";
+    menu.style.top = py + "px";
+  }
+  function closeMsgMenu() { $("#msg-menu").classList.remove("open"); }
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#msg-menu") && !e.target.closest(".bubble"))
+      closeMsgMenu();
+  });
+
+  /* ============ EMOJI POPOVER ============ */
+  const EMOJIS = "😀 😃 😄 😁 😆 🥹 😅 😂 🤣 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳 😏 😒 😞 😔 😟 😕 🙁 ☹️ 😣 😖 😫 😩 🥺 😢 😭 😤 😠 😡 🤬 🤯 😳 🥵 🥶 😱 😨 😰 😥 😓 🤗 🤔 🫡 🤭 🤫 🤥 😶 😐 😑 😬 🙄 😯 😦 😧 😮 😲 🥱 😴 🤤 😪 😵 🤐 🥴 🤢 🤮 🤧 😷 🤒 🤕 🤑 🤠 ❤️ 🧡 💛 💚 💙 💜 🤍 🤎 🖤 💔 ❣️ 💕 💞 💓 💗 💖 💘 💝 💟 ✨ 🌟 ⭐ 🌙 ☀️ 🔥 💧 🌊 🌈 🍞 🍰 🎵 🎶 📷 📸 ✈️ 🚀 🏝️ 🌲 🌸 🌹 🌻 🍀 🍃".split(" ");
+  function openEmojiPopover(anchor, onPick) {
+    const pop = $("#emoji-popover");
+    const grid = $("#emoji-grid");
+    grid.innerHTML = "";
+    EMOJIS.forEach((em) => {
+      const b = el("button", { text: em });
+      b.addEventListener("click", () => { onPick(em); pop.classList.remove("open"); });
+      grid.appendChild(b);
+    });
+    pop.classList.add("open");
+    const r = anchor.getBoundingClientRect();
+    const popR = pop.getBoundingClientRect();
+    let left = r.left;
+    if (left + popR.width > window.innerWidth - 8) left = window.innerWidth - popR.width - 8;
+    let top = r.top - popR.height - 8;
+    if (top < 8) top = r.bottom + 8;
+    pop.style.left = left + "px";
+    pop.style.top = top + "px";
+  }
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#emoji-popover") && !e.target.closest(".composer-tool") && !e.target.closest('[data-act="react"]'))
+      $("#emoji-popover").classList.remove("open");
+  });
+
+  /* ============ CHAT THEME PICKER ============ */
+  const WALLPAPERS = [
+    { id: "aurora",  name: "Aurora",  preview: "linear-gradient(135deg,#3a2a6b,#1a4060)" },
+    { id: "dusk",    name: "Dusk",    preview: "linear-gradient(180deg,#1a1426,#0f0a18)" },
+    { id: "paper",   name: "Paper",   preview: "radial-gradient(circle at 1px 1px, rgba(0,0,0,.12) 1px, #f6f1e6 1px)" },
+    { id: "forest",  name: "Forest",  preview: "linear-gradient(180deg,#0e1a18,#0a1110)" },
+    { id: "rose",    name: "Rose",    preview: "linear-gradient(180deg,#1f1318,#160d10)" },
+    { id: "ocean",   name: "Ocean",   preview: "linear-gradient(180deg,#0c1825,#08111a)" },
+    { id: "plain",   name: "Plain",   preview: "var(--bg-2)" }
+  ];
+  const BUBBLE_COLORS = ["#e7c07b", "#8a7cff", "#6bd29a", "#5a90c8", "#d97a8c", "#1b1814", "#f4d59a", "#ff8e6b"];
+
+  function openChatTheme(room) {
+    const modal = $("#chat-theme-modal");
+    const wpGrid = $("#wallpaper-grid");
+    const cGrid = $("#bubble-color-grid");
+    const sGrid = $$(".bubble-shape-btn");
+    let theme = JSON.parse(JSON.stringify(room.theme || { wallpaper: "aurora", bubbleColor: "#e7c07b", bubbleShape: "rounded" }));
+    wpGrid.innerHTML = "";
+    WALLPAPERS.forEach((w) => {
+      const sw = el("div", { class: "wallpaper-swatch" + (theme.wallpaper === w.id ? " active" : ""), style: { background: w.preview }, title: w.name });
+      sw.addEventListener("click", () => {
+        theme.wallpaper = w.id;
+        $$(".wallpaper-swatch", wpGrid).forEach((n) => n.classList.toggle("active", n === sw));
+      });
+      wpGrid.appendChild(sw);
+    });
+    cGrid.innerHTML = "";
+    BUBBLE_COLORS.forEach((c) => {
+      const sw = el("div", { class: "bubble-color-swatch" + (theme.bubbleColor === c ? " active" : ""), style: { background: c } });
+      sw.addEventListener("click", () => {
+        theme.bubbleColor = c;
+        $$(".bubble-color-swatch", cGrid).forEach((n) => n.classList.toggle("active", n === sw));
+      });
+      cGrid.appendChild(sw);
+    });
+    sGrid.forEach((b) => {
+      b.classList.toggle("active", b.dataset.shape === theme.bubbleShape);
+      b.onclick = () => {
+        theme.bubbleShape = b.dataset.shape;
+        sGrid.forEach((x) => x.classList.toggle("active", x === b));
+      };
+    });
+    $("#save-theme-btn").onclick = async () => {
+      await Halo.rooms.updateTheme(room.id, theme);
+      modal.classList.remove("open");
+      Toast("Look saved");
+    };
+    modal.classList.add("open");
+  }
+
+  /* ============ HALO PAGE ============ */
+  function renderHalo() {
+    const me = State.user;
+    const hero = `<div class="halo-hero ${me.halo ? "granted" : ""}" id="halo-hero">
+      <svg class="halo-ring-svg" viewBox="0 0 200 200"><circle cx="100" cy="100" r="90"></circle></svg>
+      ${avatarHTML(me, "xl")}
+    </div>`;
+    const page = el("div", { class: "page halo-page", html: `
+      ${hero}
+      <h1>${me.halo ? "You're Halo'd." : "Earn your Halo."}</h1>
+      <p class="lede">${me.halo ? "Your ring is yours, forever. It will appear next to your name across Rooms, Beams, and Loops." : "A Halo is granted to members who anchor themselves to a place. Share your location once and the ring is yours, forever."}</p>
+      <button class="btn btn-primary halo-grant" id="halo-grant-btn">${me.halo ? "Halo confirmed" : "Earn your Halo"}</button>
+      <p class="halo-status" id="halo-status"></p>
+    `});
+    mount(page);
+
+    if (me.halo) { $("#halo-grant-btn").disabled = true; return; }
+    $("#halo-grant-btn").addEventListener("click", () => {
+      const status = $("#halo-status");
+      status.className = "halo-status";
+      status.textContent = "Asking your device for a location…";
+      if (!navigator.geolocation) {
+        status.classList.add("error"); status.textContent = "Your device doesn't support location. Try another browser?";
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(async () => {
+        await Halo.users.grantHalo(me.uid);
+        State.user.halo = true;
+        $("#halo-hero").classList.add("granted");
+        status.classList.add("success"); status.textContent = "Welcome to the Halo'd. The ring is yours.";
+        $("#halo-grant-btn").textContent = "Halo confirmed"; $("#halo-grant-btn").disabled = true;
+        // refresh user list cache
+        const u = State.users.find((u) => u.uid === me.uid); if (u) u.halo = true;
+      }, () => {
+        status.classList.add("error"); status.textContent = "No pressure — try again whenever you're ready.";
+      }, { enableHighAccuracy: false, timeout: 10000 });
+    });
+  }
+
+  /* ============ PROFILE PAGE ============ */
+  function renderProfile() {
+    const me = State.user;
+    const myBeams = State.beams.filter((b) => b.authorId === me.uid);
+    const myRooms = State.rooms;
+
+    const page = el("div", { class: "page profile-page" });
+    const head = el("div", { class: "profile-head" });
+    head.innerHTML = `
+      ${avatarHTML(me, "lg")}
+      <div class="profile-info">
+        <div class="profile-name-line">
+          <h2 class="profile-name">${escapeHtml(me.displayName)}</h2>
+          ${haloBadge(me)}
+        </div>
+        <div class="profile-handle">@${escapeHtml(me.handle || me.email.split("@")[0])}</div>
+        <div class="profile-bio">${escapeHtml(me.bio || "Tell people what you're listening for.")}</div>
+        <div class="profile-stats">
+          <div class="stat"><span class="stat-num">${myBeams.length}</span><span class="stat-label">beams</span></div>
+          <div class="stat"><span class="stat-num">${(me.orbit || []).length}</span><span class="stat-label">in orbit</span></div>
+          <div class="stat"><span class="stat-num">${myRooms.length}</span><span class="stat-label">rooms</span></div>
+        </div>
+        <button class="profile-edit" id="edit-profile-btn">Edit profile</button>
+      </div>`;
+    page.appendChild(head);
+
+    const tabs = el("div", { class: "profile-tabs" });
+    ["Beams", "Rooms", "Orbit"].forEach((t, i) => {
+      const b = el("button", { class: "profile-tab" + (i === 0 ? " active" : ""), text: t });
+      b.addEventListener("click", () => {
+        $$(".profile-tab", tabs).forEach((n) => n.classList.remove("active"));
+        b.classList.add("active");
+        drawTab(t);
+      });
+      tabs.appendChild(b);
+    });
+    page.appendChild(tabs);
+    const tabBody = el("div", { class: "stream" });
+    page.appendChild(tabBody);
+
+    function drawTab(t) {
+      tabBody.innerHTML = "";
+      if (t === "Beams") {
+        if (!myBeams.length) tabBody.appendChild(el("div", { class: "empty", html: "<p>You haven't sent a Beam yet.</p>" }));
+        else myBeams.forEach((b, i) => {
+          if (i > 0) tabBody.appendChild(el("div", { class: "beam-sep" }));
+          const card = el("article", { class: "beam" });
+          card.innerHTML = `
+            <div class="beam-text">${escapeHtml(b.text || "")}</div>
+            ${b.image ? `<img class="beam-image" src="${b.image}" alt="" />` : ""}
+            <div class="beam-actions">
+              <span class="action-btn">${(b.sparks||[]).length} Sparks</span>
+              <span class="action-btn">${(b.comments||[]).length} Replies</span>
+              <span class="action-btn">${fmtTime(b.createdAt)}</span>
+            </div>`;
+          tabBody.appendChild(card);
+        });
+      } else if (t === "Rooms") {
+        if (!myRooms.length) tabBody.appendChild(el("div", { class: "empty", html: "<p>You haven't joined any rooms yet.</p>" }));
+        else myRooms.forEach((r) => {
+          const row = el("div", { class: "room-row", onclick: () => Router.go("/rooms/" + r.id), style: { background: "var(--bg-2)", border: "var(--hairline)", borderRadius: "var(--radius)", marginBottom: "8px" } });
+          row.innerHTML = `<div class="room-cover"><span>${r.emoji || "✨"}</span></div><div class="room-info"><div class="room-line1"><div class="room-name">${escapeHtml(r.name)}</div><div class="room-time">${r.memberIds.length} members</div></div><div class="room-line2"><div class="room-preview">${escapeHtml(r.lastMessage || "")}</div></div></div>`;
+          tabBody.appendChild(row);
         });
       } else {
-        await signIn({ email: $("#auth-email").value.trim(), password: $("#auth-pass").value });
+        const orbit = (me.orbit || []).map(userOf);
+        if (!orbit.length) tabBody.appendChild(el("div", { class: "empty", html: "<p>Your Orbit is empty. Start adding people you want to hear from.</p>" }));
+        else orbit.forEach((u) => {
+          const row = el("div", { style: { display: "flex", alignItems: "center", gap: "12px", padding: "12px 14px", background: "var(--bg-2)", border: "var(--hairline)", borderRadius: "var(--radius)", marginBottom: "8px" } });
+          row.innerHTML = `${avatarHTML(u)}<div style="flex:1"><div style="font-weight:600">${escapeHtml(u.displayName)} ${haloBadge(u)}</div><div style="font-size:13px;color:var(--fg-3)">@${escapeHtml(u.handle)}</div></div>`;
+          tabBody.appendChild(row);
+        });
       }
-    } catch (err) {
-      errEl.textContent = friendlyError(err);
-    } finally {
-      submitBtn.disabled = false; spinner.classList.add("hidden"); submitLabel.classList.remove("hidden");
     }
-  });
+    drawTab("Beams");
 
-  $("#google-btn").addEventListener("click", async () => {
-    errEl.textContent = "";
-    try { await signInGoogle(); }
-    catch (err) { errEl.textContent = friendlyError(err); }
-  });
-}
-function friendlyError(err) {
-  const msg = (err && err.message) || "Something went wrong.";
-  if (msg.includes("auth/invalid")) return "Invalid email or password.";
-  if (msg.includes("user-not-found")) return "No account with that email.";
-  if (msg.includes("email-already-in-use")) return "That email is already in use.";
-  if (msg.includes("weak-password")) return "Password should be at least 6 characters.";
-  if (msg.includes("popup-closed-by-user")) return "Sign-in window was closed.";
-  return msg.replace(/^Firebase:\s*/, "");
-}
+    // settings
+    const settings = el("div", { class: "settings-section" });
+    settings.innerHTML = `
+      <div class="settings-row"><div><div class="settings-label">Light theme</div><div class="settings-desc">Toggle between dark and light surfaces.</div></div><div class="toggle ${document.documentElement.getAttribute("data-theme") === "light" ? "on" : ""}" id="set-theme-toggle"></div></div>
+      <div class="settings-row"><div><div class="settings-label">Sound on send</div><div class="settings-desc">Play a soft chime when sending a message.</div></div><div class="toggle ${localStorage.getItem("halo.sound") === "1" ? "on" : ""}" id="set-sound-toggle"></div></div>
+      <div class="settings-row"><div><div class="settings-label">Reduce motion</div><div class="settings-desc">Tone down animations across Halo.</div></div><div class="toggle ${localStorage.getItem("halo.reduce") === "1" ? "on" : ""}" id="set-reduce-toggle"></div></div>
+    `;
+    page.appendChild(settings);
 
-/* ============================================================
-   ROUTING
-   ============================================================ */
-const ROUTES = {
-  stream: renderStream,
-  flicks: renderFlicks,
-  circles: renderCircles,
-  circle: renderCircleDetail,
-  signals: renderSignals,
-  profile: renderProfile,
-  beam: renderBeamDetail,
-  settings: renderSettings,
-  notifications: renderNotifications,
-  search: renderSearch,
-  verify: renderVerify
-};
-function parseRoute() {
-  const hash = location.hash || "#/stream";
-  const [name, ...rest] = hash.replace(/^#\//, "").split("/");
-  return { name: name || "stream", params: rest };
-}
-function navigate(path) { location.hash = path; }
-function highlightNav(name) {
-  $$('.nav-item, .bn-item').forEach(n => n.classList.toggle("is-active", n.dataset.route === name));
-}
-function teardown() {
-  state.unsub.forEach(fn => { try { fn(); } catch {} });
-  state.unsub = [];
-}
-async function router() {
-  if (!state.user) return;
-  const { name, params } = parseRoute();
-  state.route = name;
-  teardown();
-  highlightNav(name);
-  const fn = ROUTES[name] || renderStream;
-  const view = $("#view");
-  view.innerHTML = "";
-  view.classList.remove("view-anim");
-  void view.offsetWidth;
-  view.classList.add("view-anim");
-  try { await fn(view, params); } catch (e) { console.error(e); view.append(emptyState("compass", "Lost in space", "Could not load this view.")); }
-  refreshIcons();
-}
-window.addEventListener("hashchange", router);
+    settings.querySelector("#set-theme-toggle").addEventListener("click", () => Theme.toggle());
+    settings.querySelector("#set-sound-toggle").addEventListener("click", (e) => {
+      const on = e.currentTarget.classList.toggle("on");
+      localStorage.setItem("halo.sound", on ? "1" : "0");
+    });
+    settings.querySelector("#set-reduce-toggle").addEventListener("click", (e) => {
+      const on = e.currentTarget.classList.toggle("on");
+      localStorage.setItem("halo.reduce", on ? "1" : "0");
+      document.documentElement.style.setProperty("--motion", on ? "0" : "1");
+    });
 
-/* ============================================================
-   PROFILE CACHE
-   ============================================================ */
-async function profileFor(uid) {
-  if (!uid) return null;
-  if (state.cache.profilesByUid.has(uid)) return state.cache.profilesByUid.get(uid);
-  const p = await getUserProfile(uid);
-  if (p) state.cache.profilesByUid.set(uid, p);
-  return p;
-}
+    mount(page);
 
-/* ============================================================
-   COMMON UI BITS
-   ============================================================ */
-function avatar(p, sizeClass = "") {
-  const wrap = el("div", { class: `avatar ${sizeClass}` });
-  if (p?.photoURL) wrap.append(el("img", { src: p.photoURL, alt: "" }));
-  else wrap.textContent = initials(p?.displayName);
-  return wrap;
-}
-function beaconIcon(size = "") {
-  const w = el("span", { class: `beacon ${size}`, title: "Beacon verified" });
-  w.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
-  return w;
-}
-function emptyState(icon, title, sub, action) {
-  const wrap = el("div", { class: "empty" }, [
-    el("div", { class: "empty-art" }, [el("i", { "data-lucide": icon })]),
-    el("h3", { text: title }),
-    el("p", { text: sub })
-  ]);
-  if (action) wrap.append(action);
-  return wrap;
-}
-function viewHeader(title, right) {
-  const head = el("header", { class: "view-header" }, [el("h1", { text: title })]);
-  if (right) head.append(right);
-  return head;
-}
-function skeletonBeam() {
-  return el("div", { class: "beam" }, [
-    el("div", { class: "beam-head" }, [
-      el("div", { class: "skeleton", style: { width: "40px", height: "40px", borderRadius: "50%" } }),
-      el("div", { class: "skeleton", style: { width: "120px", height: "14px" } })
-    ]),
-    el("div", { class: "skeleton", style: { width: "100%", height: "14px", marginBottom: "8px" } }),
-    el("div", { class: "skeleton", style: { width: "75%", height: "14px" } })
-  ]);
-}
+    $("#edit-profile-btn").addEventListener("click", async () => {
+      const name = prompt("Display name", me.displayName) || me.displayName;
+      const bio = prompt("Bio", me.bio || "");
+      await Halo.users.update(me.uid, { displayName: name, bio: bio || "" });
+      State.user.displayName = name;
+      State.user.bio = bio || "";
+      Toast("Profile saved");
+      renderProfile();
+    });
+  }
 
-/* ============================================================
-   SCREEN: STREAM
-   ============================================================ */
-function renderStream(view) {
-  const inner = el("div", { class: "view-inner stream" });
-  inner.append(viewHeader("Stream"));
-  inner.append(composerCard());
-  const list = el("div", { class: "beam-list" });
-  for (let i = 0; i < 3; i++) list.append(skeletonBeam());
-  inner.append(list);
-  view.append(inner);
+  /* ============ COMPOSE BEAM MODAL ============ */
+  function openCompose() {
+    const m = $("#compose-modal");
+    m.classList.add("open");
+    $("#compose-text").value = "";
+    $("#compose-image").value = "";
+    $("#compose-image-preview").classList.remove("shown");
+    $("#compose-image-preview").innerHTML = "";
+    setTimeout(() => $("#compose-text").focus(), 50);
+  }
+  function bindCompose() {
+    let pendingImage = null;
+    $("#open-compose").addEventListener("click", openCompose);
+    $("#open-compose-mobile").addEventListener("click", openCompose);
+    $("#compose-image").addEventListener("change", async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      const url = await Halo.uploadImage(f);
+      pendingImage = url;
+      const prev = $("#compose-image-preview");
+      prev.classList.add("shown");
+      prev.innerHTML = `<img src="${url}" alt="" />`;
+    });
+    $("#compose-publish").addEventListener("click", async () => {
+      const text = $("#compose-text").value.trim();
+      if (!text && !pendingImage) return;
+      const btn = $("#compose-publish");
+      btn.classList.add("loading");
+      try {
+        await Halo.beams.create({ authorId: State.user.uid, text, image: pendingImage });
+        Toast("Beam sent");
+        $("#compose-modal").classList.remove("open");
+        pendingImage = null;
+      } finally {
+        btn.classList.remove("loading");
+      }
+    });
+  }
 
-  const unsub = listenBeams((items) => {
+  /* ============ CREATE ROOM MODAL ============ */
+  function openCreateRoom() {
+    const m = $("#create-room-modal");
+    $("#room-name").value = "";
+    $("#room-emoji").value = "✨";
+    $("#room-members").value = "";
+    m.classList.add("open");
+  }
+  function bindCreateRoom() {
+    $("#create-room-btn").addEventListener("click", async () => {
+      const name = $("#room-name").value.trim();
+      const emoji = $("#room-emoji").value.trim() || "✨";
+      const handles = $("#room-members").value.split(",").map((s) => s.trim().replace(/^@/, "")).filter(Boolean);
+      if (!name) { Toast("Give the room a name"); return; }
+      const all = await Halo.users.listAll();
+      const memberIds = [State.user.uid, ...handles.map((h) => (all.find((u) => u.handle === h) || {}).uid).filter(Boolean)];
+      const room = await Halo.rooms.create({ name, emoji, memberIds });
+      $("#create-room-modal").classList.remove("open");
+      Router.go("/rooms/" + room.id);
+    });
+  }
+
+  /* ============ COMMAND PALETTE ============ */
+  function openCmd() {
+    const m = $("#command-palette");
+    m.classList.add("open");
+    const inp = $("#cmd-input");
+    inp.value = "";
+    drawCmd("");
+    setTimeout(() => inp.focus(), 50);
+  }
+  function drawCmd(q) {
+    const list = $("#cmd-list");
     list.innerHTML = "";
-    if (!items.length) {
-      list.append(emptyState("sparkles", "Your Stream awaits", "Follow people in your Constellation or compose your first Beam.",
-        el("button", { class: "btn btn-primary", onClick: () => openCompose() }, [el("i", { "data-lucide": "feather" }), "Compose Beam"])));
-      refreshIcons();
+    const items = [];
+    items.push({ icon: "✦", title: "New beam", sub: "Compose a new post", run: openCompose });
+    items.push({ icon: "✦", title: "New room", sub: "Start a conversation", run: openCreateRoom });
+    items.push({ icon: "✦", title: "Toggle theme", sub: "Switch light / dark", run: Theme.toggle });
+    State.rooms.forEach((r) => items.push({ icon: r.emoji || "✦", title: r.name, sub: "Open room", run: () => Router.go("/rooms/" + r.id) }));
+    State.users.forEach((u) => {
+      if (u.uid === State.user.uid) return;
+      items.push({ icon: "@", title: u.displayName, sub: "@" + u.handle, run: () => {
+        // open or create a DM
+        const dm = State.rooms.find((r) => r.memberIds.length === 2 && r.memberIds.includes(u.uid));
+        if (dm) Router.go("/rooms/" + dm.id);
+        else Halo.rooms.create({ name: u.displayName, emoji: "💬", memberIds: [State.user.uid, u.uid] }).then((r) => Router.go("/rooms/" + r.id));
+      }});
+    });
+    const ql = q.toLowerCase();
+    const filtered = items.filter((it) => !ql || it.title.toLowerCase().includes(ql) || it.sub.toLowerCase().includes(ql));
+    filtered.slice(0, 14).forEach((it, i) => {
+      const li = el("li", { class: i === 0 ? "active" : "", onclick: () => { it.run(); $("#command-palette").classList.remove("open"); } });
+      li.innerHTML = `<span class="cmd-title">${escapeHtml(it.title)}</span><span class="cmd-sub">${escapeHtml(it.sub)}</span>`;
+      list.appendChild(li);
+    });
+  }
+  function bindCmd() {
+    $("#open-cmd").addEventListener("click", openCmd);
+    $("#cmd-input").addEventListener("input", (e) => drawCmd(e.target.value));
+    $("#cmd-input").addEventListener("keydown", (e) => {
+      const list = $("#cmd-list");
+      const items = $$("li", list);
+      const idx = items.findIndex((n) => n.classList.contains("active"));
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (items[idx]) items[idx].classList.remove("active");
+        const n = items[Math.min(idx + 1, items.length - 1)];
+        if (n) n.classList.add("active");
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (items[idx]) items[idx].classList.remove("active");
+        const n = items[Math.max(idx - 1, 0)];
+        if (n) n.classList.add("active");
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const n = items[idx >= 0 ? idx : 0];
+        if (n) n.click();
+      }
+    });
+    document.addEventListener("keydown", (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        $("#command-palette").classList.contains("open")
+          ? $("#command-palette").classList.remove("open")
+          : openCmd();
+      }
+      if (e.key === "Escape") {
+        $$(".modal.open").forEach((m) => m.classList.remove("open"));
+        $("#emoji-popover").classList.remove("open");
+        closeMsgMenu();
+      }
+    });
+  }
+
+  /* ============ MODAL CLOSE handlers ============ */
+  function bindModals() {
+    $$(".modal").forEach((m) => {
+      m.addEventListener("click", (e) => {
+        if (e.target.matches("[data-close], .modal-scrim")) m.classList.remove("open");
+      });
+    });
+  }
+
+  /* ============ ROUTES ============ */
+  Router
+    .on("/", () => renderStream())
+    .on("/loops", () => renderLoops())
+    .on("/rooms", () => renderRooms())
+    .on("/halo", () => renderHalo())
+    .on("/me", () => renderProfile())
+    .on("/compose", () => { openCompose(); Router.go(Router._lastBeforeCompose || "/"); })
+    .onMatch(/^\/rooms\/([^\/?#]+)/, (id) => renderRoom(id));
+
+  /* ============ APP BOOT ============ */
+  function bootApp() {
+    bindModals();
+    bindCompose();
+    bindCreateRoom();
+    bindCmd();
+    $("#toggle-theme").addEventListener("click", Theme.toggle);
+    $("#signout-btn").addEventListener("click", async () => { await Halo.auth.signOut(); });
+
+    // Initial routing
+    Router.handle();
+  }
+
+  /* ============ AUTH BOOT ============ */
+  bindAuthUI();
+  setTimeout(() => $("#splash").classList.add("gone"), 600);
+
+  Halo.auth.onChange(async (user) => {
+    if (!user) {
+      $("#auth").classList.remove("hidden");
+      $("#app").classList.add("hidden");
+      // unsub
+      if (beamsUnsub) { beamsUnsub(); beamsUnsub = null; }
+      if (roomsUnsub) { roomsUnsub(); roomsUnsub = null; }
+      if (roomOneUnsub) { roomOneUnsub(); roomOneUnsub = null; }
       return;
     }
-    items.forEach(b => list.append(renderBeam(b)));
-    refreshIcons();
-  });
-  state.unsub.push(unsub);
-}
-
-function composerCard() {
-  return el("div", { class: "composer-card", onClick: () => openCompose() }, [
-    avatar(state.profile),
-    el("div", { class: "quick-input", text: "Send a Beam into the Stream..." })
-  ]);
-}
-
-function renderBeam(b) {
-  const isGlowed = (b.glows || []).includes(state.user.uid);
-  const node = el("article", {
-    class: "beam" + (isGlowed ? " has-glow" : ""),
-    data: { id: b.id }
+    State.user = user;
+    State.users = await Halo.users.listAll();
+    refreshUserMap();
+    $("#auth").classList.add("hidden");
+    $("#app").classList.remove("hidden");
+    bootApp();
   });
 
-  const meta = el("div", { class: "beam-meta" });
-  const author = el("div", { class: "beam-author" }, [
-    el("a", { href: `#/profile/${b.authorHandle || ""}`, text: b.authorName || "Orbiter" })
-  ]);
-  if (b.authorVerified) author.append(beaconIcon());
-  meta.append(author);
-  const sub = el("div", { class: "beam-sub", text: timeAgo(b.createdAt) });
-  meta.append(sub);
-
-  const head = el("div", { class: "beam-head" }, [
-    avatar({ displayName: b.authorName, photoURL: b.authorPhoto }, "sm"),
-    meta,
-    el("button", { class: "btn-icon", onClick: (e) => beamMenu(e, b) }, [el("i", { "data-lucide": "more-horizontal" })])
-  ]);
-  node.append(head);
-
-  // Tappable area opens the post detail
-  const openDetail = () => navigate(`/beam/${b.id}`);
-
-  if (b.body) {
-    const body = el("div", { class: "beam-body", text: b.body });
-    body.style.cursor = "pointer";
-    body.addEventListener("click", openDetail);
-    node.append(body);
-  }
-  if (b.videoURL) {
-    const vid = el("video", { src: b.videoURL, playsinline: "", muted: "", loop: "", preload: "metadata", controls: "" });
-    const wrap = el("div", { class: "beam-image beam-video" }, [vid]);
-    wrap.style.cursor = "pointer";
-    wrap.addEventListener("click", (e) => { if (e.target.tagName !== "VIDEO") openDetail(); });
-    node.append(wrap);
-  } else if (b.imageURL) {
-    const img = el("img", { src: b.imageURL, alt: "", loading: "lazy" });
-    const wrap = el("div", { class: "beam-image" }, [img]);
-    wrap.style.cursor = "pointer";
-    wrap.addEventListener("click", openDetail);
-    node.append(wrap);
-  }
-
-  const glowBtn = el("button", { class: "beam-act" + (isGlowed ? " is-glowed" : "") }, [
-    el("i", { "data-lucide": "heart" }),
-    el("span", { text: String(b.glowsCount || 0) })
-  ]);
-  glowBtn.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    glowBtn.classList.add("glowing");
-    setTimeout(() => glowBtn.classList.remove("glowing"), 600);
-    const nowGlowed = await toggleGlow(b.id, state.user.uid);
-    glowBtn.classList.toggle("is-glowed", nowGlowed);
-    node.classList.toggle("has-glow", nowGlowed);
-    if (nowGlowed && b.authorUid !== state.user.uid) {
-      createNotification(b.authorUid, {
-        kind: "glow", fromUid: state.user.uid, fromName: state.profile.displayName, beamId: b.id
-      });
-    }
-    refreshIcons();
-  });
-
-  const echoBtn = el("button", { class: "beam-act", onClick: (e) => { e.stopPropagation(); openDetail(); } }, [
-    el("i", { "data-lucide": "message-circle" }), el("span", { text: String(b.echoesCount || 0) })
-  ]);
-  const signalBtn = el("button", { class: "beam-act", onClick: (e) => { e.stopPropagation(); openSignalWith(b.authorUid); } }, [
-    el("i", { "data-lucide": "send" })
-  ]);
-  const shareBtn = el("button", { class: "beam-act", onClick: (e) => { e.stopPropagation(); navigator.clipboard?.writeText(`${location.origin}${location.pathname}#/beam/${b.id}`); toast("Link copied", "success", "check"); } }, [
-    el("i", { "data-lucide": "share-2" })
-  ]);
-
-  node.append(el("div", { class: "beam-actions" }, [glowBtn, echoBtn, signalBtn, shareBtn]));
-  node.addEventListener("contextmenu", (e) => { e.preventDefault(); beamMenu(e, b); });
-  return node;
-}
-
-/* ============================================================
-   SCREEN: BEAM DETAIL (post + echoes/comments)
-   ============================================================ */
-async function renderBeamDetail(view, params) {
-  const id = params[0];
-  if (!id) { navigate("/stream"); return; }
-  const inner = el("div", { class: "view-inner stream" });
-  const header = el("header", { class: "view-header detail-header" }, [
-    el("button", { class: "btn-icon", onClick: () => history.length > 1 ? history.back() : navigate("/stream"), "aria-label": "Back" }, [el("i", { "data-lucide": "arrow-left" })]),
-    el("h2", { text: "Beam" })
-  ]);
-  inner.append(header);
-  const beamHolder = el("div");
-  const echoesHolder = el("div", { class: "echo-list" });
-  inner.append(beamHolder, echoesHolder);
-  view.append(inner);
-
-  const renderInto = (b) => {
-    beamHolder.innerHTML = "";
-    beamHolder.append(renderBeam(b));
-    refreshIcons();
-  };
-  // Live beam updates
-  const u1 = listenBeam(id, renderInto);
-  state.unsub.push(u1);
-  // Echoes (comments)
-  const u2 = listenEchoes(id, (echoes) => {
-    echoesHolder.innerHTML = "";
-    echoesHolder.append(el("div", { class: "echo-head", text: `${echoes.length} ${echoes.length === 1 ? "Echo" : "Echoes"}` }));
-    if (!echoes.length) {
-      echoesHolder.append(el("div", { class: "muted text-sm", style: { padding: "1rem", textAlign: "center" }, text: "Be the first to Echo this Beam." }));
-    } else {
-      echoes.forEach(e => echoesHolder.append(renderEcho(e)));
-    }
-    refreshIcons();
-  });
-  state.unsub.push(u2);
-
-  // Compose echo
-  const composer = el("div", { class: "echo-composer" });
-  const ta = el("textarea", { placeholder: "Echo this Beam...", rows: 1, maxlength: 400 });
-  ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 120) + "px"; });
-  const sendBtn = el("button", { class: "chat-send", "aria-label": "Send Echo" }, [el("i", { "data-lucide": "send" })]);
-  ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendBtn.click(); } });
-  sendBtn.addEventListener("click", async () => {
-    const text = ta.value.trim();
-    if (!text) return;
-    sendBtn.disabled = true;
-    try {
-      await addEcho(id, { author: state.profile, text });
-      const beam = await getBeam(id);
-      if (beam && beam.authorUid !== state.user.uid) {
-        createNotification(beam.authorUid, { kind: "echo", fromUid: state.user.uid, fromName: state.profile.displayName, beamId: id });
-      }
-      ta.value = ""; ta.style.height = "auto";
-    } catch (err) { toast(err.message, "error", "alert-circle"); }
-    finally { sendBtn.disabled = false; }
-  });
-  composer.append(avatar(state.profile, "sm"), ta, sendBtn);
-  inner.append(composer);
-  refreshIcons();
-}
-
-function renderEcho(e) {
-  const row = el("div", { class: "echo" }, [
-    avatar({ displayName: e.authorName, photoURL: e.authorPhoto }, "sm"),
-    el("div", { class: "echo-body" }, [
-      el("div", { class: "row gap-1" }, [
-        el("a", { class: "fw-600", href: `#/profile/${e.authorHandle}`, text: e.authorName }),
-        e.authorVerified ? beaconIcon() : null,
-        el("span", { class: "text-xs muted", text: " · " + timeAgo(e.createdAt) })
-      ]),
-      el("div", { text: e.text, style: { marginTop: "0.15rem" } })
-    ])
-  ]);
-  return row;
-}
-
-function beamMenu(e, b) {
-  e.preventDefault(); e.stopPropagation();
-  const x = e.clientX, y = e.clientY;
-  const isMine = b.authorUid === state.user.uid;
-  openCtx(x, y, [
-    { icon: "bookmark", label: "Save Beam", onClick: () => toast("Beam saved", "success", "bookmark") },
-    { icon: "copy", label: "Copy text", onClick: () => { navigator.clipboard?.writeText(b.body || ""); toast("Copied", "success", "check"); } },
-    { icon: "share-2", label: "Share link", onClick: () => { navigator.clipboard?.writeText(`${location.origin}${location.pathname}#/profile/${b.authorHandle}`); toast("Link copied", "success", "check"); } },
-    isMine && { icon: "trash-2", label: "Delete Beam", danger: true, onClick: async () => { await deleteBeam(b.id); toast("Beam removed", "success", "trash-2"); } },
-    !isMine && { icon: "flag", label: "Report", onClick: () => toast("Report sent", "success", "flag") }
-  ]);
-}
-
-/* ============================================================
-   COMPOSE (sheet)
-   ============================================================ */
-async function openCompose(presetCircleId = null) {
-  let mediaFile = null;
-  let mediaPreviewURL = null;
-  let mediaKind = null; // 'image' | 'video'
-
-  const textarea = el("textarea", { placeholder: "What light are you sending out?", maxlength: 600 });
-  const counter = el("span", { class: "compose-counter", text: "0 / 600" });
-  const previewWrap = el("div", { class: "compose-preview hidden" });
-  const imgInput = el("input", { type: "file", accept: "image/*", style: { display: "none" } });
-  const vidInput = el("input", { type: "file", accept: "video/*", style: { display: "none" } });
-  let circleId = presetCircleId;
-
-  textarea.addEventListener("input", () => {
-    textarea.style.height = "auto";
-    textarea.style.height = Math.min(textarea.scrollHeight, 320) + "px";
-    counter.textContent = `${textarea.value.length} / 600`;
-    counter.classList.toggle("over", textarea.value.length > 580);
-  });
-
-  const setMedia = (f, kind) => {
-    mediaFile = f; mediaKind = kind;
-    if (mediaPreviewURL) URL.revokeObjectURL(mediaPreviewURL);
-    mediaPreviewURL = URL.createObjectURL(f);
-    previewWrap.innerHTML = "";
-    previewWrap.classList.remove("hidden");
-    const previewMedia = kind === "video"
-      ? el("video", { src: mediaPreviewURL, controls: "", playsinline: "", muted: "" })
-      : el("img", { src: mediaPreviewURL, alt: "" });
-    previewWrap.append(
-      previewMedia,
-      el("button", { class: "remove", "aria-label": "Remove", onClick: () => { mediaFile = null; mediaKind = null; previewWrap.innerHTML = ""; previewWrap.classList.add("hidden"); } }, [el("i", { "data-lucide": "x" })])
-    );
-    refreshIcons();
-  };
-  imgInput.addEventListener("change", () => { const f = imgInput.files?.[0]; if (f) setMedia(f, "image"); });
-  vidInput.addEventListener("change", () => {
-    const f = vidInput.files?.[0]; if (!f) return;
-    if (f.size > 80 * 1024 * 1024) { toast("Video is too large (max 80 MB)", "error", "alert-circle"); return; }
-    setMedia(f, "video");
-  });
-
-  const sendBtn = el("button", { class: "btn btn-primary" }, [el("i", { "data-lucide": "send" }), "Send Beam"]);
-  sendBtn.addEventListener("click", async () => {
-    const body = textarea.value.trim();
-    if (!body && !mediaFile) { toast("Add a thought, image, or video", "error", "alert-circle"); return; }
-    sendBtn.disabled = true; sendBtn.querySelector("span")?.remove?.();
-    sendBtn.append(el("span", { class: "btn-spinner" }));
-    try {
-      let imageURL = null, videoURL = null;
-      if (mediaFile) {
-        toast(mediaKind === "video" ? "Uploading video..." : "Uploading image...", "info", "upload-cloud");
-        const up = await uploadToCloudinary(mediaFile, { folder: mediaKind === "video" ? "orbit/flicks" : "orbit/beams" });
-        if (mediaKind === "video") videoURL = up.url; else imageURL = up.url;
-      }
-      await createBeam({
-        author: state.profile, body, imageURL, videoURL, circleId,
-        kind: mediaKind === "video" ? "flick" : "beam"
-      });
-      toast(mediaKind === "video" ? "Flick posted" : "Beam sent", "success", "send");
-      close();
-    } catch (err) {
-      console.error(err);
-      toast(err.message || "Could not send", "error", "alert-circle");
-      sendBtn.disabled = false;
-    }
-  });
-
-  const tools = el("div", { class: "compose-tools" }, [
-    el("button", { class: "tool", onClick: () => imgInput.click() }, [el("i", { "data-lucide": "image" }), "Image"]),
-    el("button", { class: "tool", onClick: () => vidInput.click() }, [el("i", { "data-lucide": "video" }), "Video"]),
-    el("button", { class: "tool", onClick: async () => {
-      const c = await pickCirclePrompt();
-      if (c) { circleId = c.id; toast(`Posting to ${c.name}`, "info", "users-round"); }
-    } }, [el("i", { "data-lucide": "users-round" }), "Circle"]),
-    el("div", { style: { flex: "1" } }),
-    counter
-  ]);
-
-  textarea.addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") sendBtn.click();
-  });
-
-  const body = el("div", { class: "compose-area" }, [
-    el("div", { style: { display: "flex", gap: "0.75rem", alignItems: "flex-start" } }, [avatar(state.profile, "sm"), textarea]),
-    previewWrap, tools, imgInput, vidInput,
-    el("div", { style: { display: "flex", justifyContent: "flex-end", marginTop: "0.5rem" } }, [sendBtn])
-  ]);
-  const close = openSheet({ body });
-  setTimeout(() => textarea.focus(), 100);
-}
-
-async function pickCirclePrompt() {
-  return new Promise(resolve => {
-    const list = el("div");
-    const close = openSheet({ body: el("div", {}, [
-      el("h3", { text: "Post into a Circle", style: { marginBottom: "0.75rem" } }),
-      list
-    ]) });
-    const unsub = listenCircles(items => {
-      list.innerHTML = "";
-      if (!items.length) list.append(emptyState("users-round", "No Circles yet", "Create one from the Circles tab."));
-      items.forEach(c => {
-        list.append(el("button", {
-          class: "signal-item",
-          style: { width: "100%" },
-          onClick: () => { unsub(); close(); resolve(c); }
-        }, [
-          el("div", { class: "avatar", style: { background: `linear-gradient(135deg, hsl(var(--accent)), hsl(var(--accent-2)))` } }, [el("i", { "data-lucide": "users-round" })]),
-          el("div", { class: "meta" }, [
-            el("div", { class: "name", text: c.name }),
-            el("div", { class: "preview", text: `${c.membersCount || 1} members` })
-          ])
-        ]));
-      });
-      refreshIcons();
-    });
-  });
-}
-
-/* ============================================================
-   SCREEN: FLICKS
-   ============================================================ */
-function renderFlicks(view) {
-  const wrap = el("div", { class: "flicks" });
-  view.append(wrap);
-  const unsub = listenBeams((items) => {
-    const flicks = items.filter(b => b.videoURL || b.kind === "flick" || b.imageURL);
-    wrap.innerHTML = "";
-    if (!flicks.length) {
-      wrap.append(emptyState("play-circle", "No Flicks yet", "Compose a Beam with a video and it will appear here as a Flick.",
-        el("button", { class: "btn btn-primary", onClick: () => openCompose() }, [el("i", { "data-lucide": "video" }), "Record / Upload"])));
-      refreshIcons(); return;
-    }
-    flicks.forEach(b => wrap.append(renderFlick(b)));
-    refreshIcons();
-    // Auto-play first visible video
-    setupFlickAutoplay(wrap);
-  });
-  state.unsub.push(unsub);
-}
-function setupFlickAutoplay(wrap) {
-  const vids = wrap.querySelectorAll("video");
-  if (!vids.length || !("IntersectionObserver" in window)) return;
-  const obs = new IntersectionObserver(entries => {
-    entries.forEach(e => {
-      const v = e.target;
-      if (e.intersectionRatio > 0.6) v.play().catch(()=>{});
-      else v.pause();
-    });
-  }, { threshold: [0, 0.6, 1] });
-  vids.forEach(v => obs.observe(v));
-}
-function renderFlick(b) {
-  const node = el("section", { class: "flick" });
-  if (b.videoURL) {
-    const v = el("video", { src: b.videoURL, playsinline: "", loop: "", muted: "", preload: "metadata", style: { objectFit: "cover", width: "100%", height: "100%" } });
-    v.addEventListener("click", () => { v.muted = !v.muted; });
-    node.append(v);
-  } else if (b.imageURL) {
-    node.append(el("img", { src: b.imageURL, alt: "", loading: "lazy", style: { objectFit: "cover", width: "100%", height: "100%" } }));
-  } else {
-    node.append(el("div", { class: "flick-fallback", text: (b.body || "").slice(0, 60) }));
-  }
-  node.append(el("div", { class: "flick-overlay" }));
-  const meta = el("div", { class: "flick-meta" }, [
-    el("div", { class: "who" }, [
-      el("a", { href: `#/profile/${b.authorHandle}`, text: "@" + (b.authorHandle || "orbiter"), style: { color: "white" } }),
-      b.authorVerified ? beaconIcon() : null
-    ]),
-    el("div", { class: "what", text: b.body || "" })
-  ]);
-  const isGlowed = (b.glows || []).includes(state.user.uid);
-  const glowBtn = el("button", { class: isGlowed ? "is-glowed" : "" }, [
-    el("i", { "data-lucide": "heart" }), el("span", { text: String(b.glowsCount || 0) })
-  ]);
-  glowBtn.addEventListener("click", async () => {
-    const nowG = await toggleGlow(b.id, state.user.uid);
-    glowBtn.classList.toggle("is-glowed", nowG);
-    glowBtn.querySelectorAll("span")[0].textContent = String((b.glowsCount || 0) + (nowG ? 1 : -1));
-  });
-  const side = el("div", { class: "flick-side" }, [
-    glowBtn,
-    el("button", { onClick: () => openSignalWith(b.authorUid) }, [el("i", { "data-lucide": "message-square" }), el("span", { text: "Signal" })]),
-    el("button", { onClick: () => { navigator.clipboard?.writeText(`${location.origin}${location.pathname}#/profile/${b.authorHandle}`); toast("Link copied", "success", "check"); } }, [el("i", { "data-lucide": "share-2" }), el("span", { text: "Share" })])
-  ]);
-  node.append(meta, side);
-  return node;
-}
-
-/* ============================================================
-   SCREEN: CIRCLES
-   ============================================================ */
-function renderCircles(view) {
-  const inner = el("div", { class: "view-inner wide" });
-  const newBtn = el("button", { class: "btn btn-primary", onClick: () => openCreateCircle() }, [el("i", { "data-lucide": "plus" }), "New Circle"]);
-  inner.append(viewHeader("Circles", newBtn));
-  const grid = el("div", { class: "circles-grid" });
-  inner.append(grid);
-  view.append(inner);
-  const unsub = listenCircles(items => {
-    grid.innerHTML = "";
-    if (!items.length) {
-      grid.append(emptyState("users-round", "No Circles yet", "Create the first Circle to gather your community.",
-        el("button", { class: "btn btn-primary", onClick: () => openCreateCircle() }, [el("i", { "data-lucide": "plus" }), "Create Circle"])));
-    } else {
-      items.forEach(c => grid.append(renderCircleCard(c)));
-    }
-    refreshIcons();
-  });
-  state.unsub.push(unsub);
-}
-function renderCircleCard(c) {
-  const node = el("div", { class: "circle-card", onClick: () => navigate(`/circle/${c.id}`) });
-  const cover = el("div", { class: "circle-cover", style: c.coverURL ? { backgroundImage: `url(${c.coverURL})`, backgroundSize: "cover", backgroundPosition: "center" } : {} });
-  cover.append(el("div", { class: "vibe", style: { background: `linear-gradient(135deg, hsl(var(--accent)), hsl(var(--accent-2)))` } }));
-  const body = el("div", { class: "circle-body" }, [
-    el("h3", { text: c.name }),
-    el("div", { class: "members", text: `${c.membersCount || 1} satellites${c.isPrivate ? " · private" : ""}` }),
-    c.description ? el("p", { class: "muted", style: { marginTop: "0.5rem", fontSize: "0.85rem" }, text: c.description }) : null
-  ]);
-  node.append(cover, body);
-  return node;
-}
-function openCreateCircle() {
-  let coverFile = null;
-  let coverURL = null;
-  const name = el("input", { placeholder: "Circle name", maxlength: 60 });
-  const desc = el("textarea", { placeholder: "What's this Circle about?", maxlength: 200, rows: 3 });
-  const coverPreview = el("div", { class: "circle-cover", style: { borderRadius: "12px", marginBottom: "0.75rem" } });
-  const fileInput = el("input", { type: "file", accept: "image/*", style: { display: "none" } });
-  fileInput.addEventListener("change", () => {
-    coverFile = fileInput.files?.[0]; if (!coverFile) return;
-    coverURL = URL.createObjectURL(coverFile);
-    coverPreview.style.backgroundImage = `url(${coverURL})`;
-    coverPreview.style.backgroundSize = "cover";
-    coverPreview.style.backgroundPosition = "center";
-  });
-  const privateToggle = el("div", { class: "toggle", onClick: (e) => e.currentTarget.classList.toggle("on") });
-  const submit = el("button", { class: "btn btn-primary btn-block" }, ["Create Circle"]);
-  submit.addEventListener("click", async () => {
-    if (!name.value.trim()) { toast("Name your Circle", "error", "alert-circle"); return; }
-    submit.disabled = true;
-    try {
-      let cover = null;
-      if (coverFile) {
-        const up = await uploadToCloudinary(coverFile, { folder: "orbit/circles" });
-        cover = up.url;
-      }
-      const id = await createCircle({
-        name: name.value.trim(),
-        description: desc.value.trim(),
-        coverURL: cover,
-        isPrivate: privateToggle.classList.contains("on"),
-        owner: state.profile
-      });
-      toast("Circle created", "success", "users-round");
-      close();
-      navigate(`/circle/${id}`);
-    } catch (err) { toast(err.message, "error", "alert-circle"); submit.disabled = false; }
-  });
-  const body = el("div", {}, [
-    coverPreview,
-    el("button", { class: "btn btn-ghost", style: { marginBottom: "1rem" }, onClick: () => fileInput.click() }, [el("i", { "data-lucide": "image" }), "Upload cover"]),
-    fileInput,
-    el("div", { class: "field" }, [el("label", { text: "Name" }), name]),
-    el("div", { class: "field" }, [el("label", { text: "Description" }), desc]),
-    el("div", { class: "setting-row" }, [
-      el("div", { class: "label" }, [el("div", { text: "Private Circle" }), el("div", { class: "desc", text: "Only members can see Beams" })]),
-      privateToggle
-    ]),
-    submit
-  ]);
-  const close = openModal({ title: "Create a Circle", body });
-}
-
-async function renderCircleDetail(view, params) {
-  const id = params[0]; if (!id) return navigate("/circles");
-  const c = await getCircle(id);
-  if (!c) { view.append(emptyState("compass", "Circle not found", "Maybe it drifted away.")); return; }
-  const inner = el("div", { class: "view-inner wide" });
-  const cover = el("div", { class: "circle-detail-cover", style: c.coverURL ? { backgroundImage: `linear-gradient(180deg, transparent, hsl(232 50% 3% / 0.6)), url(${c.coverURL})`, backgroundSize: "cover", backgroundPosition: "center" } : {} }, [
-    el("div", {}, [el("h2", { text: c.name }), el("div", { class: "members", text: `${c.membersCount || 1} satellites${c.isPrivate ? " · private" : ""}` })])
-  ]);
-  inner.append(cover);
-
-  const isMember = (c.members || []).includes(state.user.uid);
-  const actions = el("div", { class: "row", style: { marginBottom: "1rem", gap: "0.5rem" } });
-  const joinBtn = el("button", { class: isMember ? "btn btn-ghost" : "btn btn-primary" }, [isMember ? "Leave" : "Join"]);
-  joinBtn.addEventListener("click", async () => {
-    if (isMember) { await leaveCircle(id, state.user.uid); toast("Left Circle", "info", "users-round"); }
-    else { await joinCircle(id, state.user.uid); toast("Joined Circle", "success", "users-round"); }
-    router();
-  });
-  actions.append(joinBtn,
-    el("button", { class: "btn btn-soft", onClick: () => openCompose(id) }, [el("i", { "data-lucide": "feather" }), "Beam in Circle"])
-  );
-  inner.append(actions);
-  if (c.description) inner.append(el("p", { class: "muted", style: { marginBottom: "1rem" }, text: c.description }));
-
-  const list = el("div");
-  inner.append(list);
-  view.append(inner);
-  const unsub = listenBeams(items => {
-    list.innerHTML = "";
-    if (!items.length) list.append(emptyState("sparkles", "Quiet in here", "Be the first to send a Beam in this Circle."));
-    items.forEach(b => list.append(renderBeam(b)));
-    refreshIcons();
-  }, { circleId: id });
-  state.unsub.push(unsub);
-}
-
-/* ============================================================
-   SCREEN: SIGNALS (chat)
-   ============================================================ */
-async function renderSignals(view, params) {
-  const layout = el("div", { class: "signals-layout" });
-  view.append(layout);
-  view.style.padding = "0";
-
-  const list = el("div", { class: "signals-list" });
-  const head = el("div", { class: "signals-list-head" }, [
-    el("h2", { text: "Signals" }),
-    el("input", { class: "signals-search", placeholder: "Search Signals" })
-  ]);
-  list.append(head);
-  const itemsWrap = el("div");
-  list.append(itemsWrap);
-  const pane = el("div", { class: "chat-pane" });
-  pane.append(el("div", { class: "empty", style: { margin: "auto" } }, [
-    el("div", { class: "empty-art" }, [el("i", { "data-lucide": "message-square" })]),
-    el("h3", { text: "Pick a Signal" }),
-    el("p", { text: "Or start one from a profile." })
-  ]));
-  layout.append(list, pane);
-  refreshIcons();
-
-  const activeId = params[0] || null;
-  if (activeId) layout.classList.add("has-active");
-
-  const unsub = listenMyChats(state.user.uid, async (chats) => {
-    itemsWrap.innerHTML = "";
-    if (!chats.length) itemsWrap.append(emptyState("message-square", "No Signals yet", "Tap a profile and send a Signal."));
-    for (const c of chats) {
-      const otherUid = (c.members || []).find(u => u !== state.user.uid);
-      const other = await profileFor(otherUid) || { displayName: "Orbiter" };
-      const item = el("div", {
-        class: "signal-item" + (c.id === activeId ? " is-active" : ""),
-        onClick: () => navigate(`/signals/${c.id}`)
-      }, [
-        avatar(other),
-        el("div", { class: "meta" }, [
-          el("div", { class: "top" }, [
-            (() => {
-              const n = el("div", { class: "name", text: other.displayName });
-              if (other.verified) n.append(beaconIcon());
-              return n;
-            })(),
-            el("div", { class: "time", text: timeAgo(c.lastAt) })
-          ]),
-          el("div", { class: "preview" }, [
-            el("span", { class: "txt", text: c.lastMessage?.text || "Say hi" }),
-            (c.unread?.[state.user.uid] > 0) ? el("span", { class: "badge", text: String(c.unread[state.user.uid]) }) : null
-          ])
-        ])
-      ]);
-      itemsWrap.append(item);
-    }
-    refreshIcons();
-  });
-  state.unsub.push(unsub);
-
-  if (activeId) renderChatPane(pane, activeId);
-}
-
-async function renderChatPane(pane, chatId) {
-  pane.innerHTML = "";
-  const chatSnap = await new Promise(res => {
-    const u = listenChat(chatId, c => { u(); res(c); });
-  });
-  if (!chatSnap) { pane.append(emptyState("compass", "Signal not found", "")); return; }
-  const otherUid = (chatSnap.members || []).find(u => u !== state.user.uid);
-  const other = await profileFor(otherUid) || { displayName: "Orbiter" };
-
-  const settings = chatSnap.settings || {};
-  const themeBg = settings.bg || null;
-  const accent = settings.accent || null;
-  const bubbleR = settings.bubble === "square" ? "8px" : "18px";
-  pane.style.setProperty("--bubble-r", bubbleR);
-  if (themeBg) pane.style.setProperty("--chat-bg", themeBg);
-
-  const head = el("div", { class: "chat-head" }, [
-    el("button", { class: "btn-icon", onClick: () => { history.back(); } }, [el("i", { "data-lucide": "arrow-left" })]),
-    avatar(other, "sm"),
-    el("div", {}, [
-      (() => { const n = el("div", { class: "name", text: other.displayName }); if (other.verified) n.append(beaconIcon()); return n; })(),
-      el("div", { class: "pres", text: other.locationLabel || "online" })
-    ]),
-    el("div", { class: "actions" }, [
-      el("button", { class: "btn-icon", onClick: () => openChatCustomize(chatId, settings) }, [el("i", { "data-lucide": "palette" })]),
-      el("button", { class: "btn-icon", onClick: () => navigate(`/profile/${other.handle}`) }, [el("i", { "data-lucide": "user" })])
-    ])
-  ]);
-  const body = el("div", { class: "chat-body" });
-  const compose = renderChatCompose(chatId, other);
-  pane.append(head, body, compose);
-  refreshIcons();
-
-  let stickToBottom = true;
-  body.addEventListener("scroll", () => {
-    stickToBottom = (body.scrollHeight - body.scrollTop - body.clientHeight) < 80;
-  });
-
-  const unsubMsgs = listenMessages(chatId, (msgs) => {
-    body.innerHTML = "";
-    let lastDay = "";
-    msgs.forEach(m => {
-      const d = dayLabel(m.createdAt);
-      if (d && d !== lastDay) { body.append(el("div", { class: "chat-day", text: d })); lastDay = d; }
-      body.append(renderMessage(m, chatId));
-    });
-    refreshIcons();
-    if (stickToBottom) body.scrollTop = body.scrollHeight;
-  });
-  state.unsub.push(unsubMsgs);
-}
-
-function renderMessage(m, chatId) {
-  const mine = m.authorUid === state.user.uid;
-  const row = el("div", { class: "msg-row" + (mine ? " me" : "") });
-  if (!mine) row.append(avatar({ displayName: m.authorName }, "xs"));
-  const bubble = el("div", { class: "msg" });
-  if (m.replyTo) {
-    bubble.append(el("div", { class: "reply-quote" }, [
-      el("div", { class: "fw-600", text: m.replyTo.authorName || "Reply" }),
-      el("div", { class: "truncate", text: m.replyTo.text || "" })
-    ]));
-  }
-  if (m.text) bubble.append(el("div", { text: m.text }));
-  if (m.attachmentURL) bubble.append(el("img", { src: m.attachmentURL, style: { maxWidth: "240px", borderRadius: "10px", marginTop: "0.4rem" } }));
-
-  const reactions = m.reactions || {};
-  if (Object.keys(reactions).length) {
-    const wrap = el("div", { class: "reactions" });
-    Object.entries(reactions).forEach(([key, list]) => {
-      wrap.append(el("span", {}, [el("i", { "data-lucide": REACTIONS[key]?.icon || "sparkle" }), el("span", { text: String(list.length) })]));
-    });
-    bubble.append(wrap);
-  }
-  bubble.addEventListener("click", () => openMessageActions(m, chatId));
-  bubble.addEventListener("contextmenu", (e) => { e.preventDefault(); openMessageActions(m, chatId); });
-  row.append(bubble, el("div", { class: "msg-time", text: timeAgo(m.createdAt) }));
-  return row;
-}
-
-const REACTIONS = {
-  spark:  { icon: "sparkles" },
-  glow:   { icon: "sun" },
-  star:   { icon: "star" },
-  comet:  { icon: "rocket" },
-  heart:  { icon: "heart" },
-  laugh:  { icon: "smile" }
-};
-function openMessageActions(m, chatId) {
-  const picker = el("div", { class: "reaction-picker" });
-  Object.entries(REACTIONS).forEach(([key, r]) => {
-    picker.append(el("button", { onClick: async () => { await addReaction(chatId, m.id, state.user.uid, key); close(); } }, [el("i", { "data-lucide": r.icon })]));
-  });
-  const items = el("div", { class: "col", style: { gap: "0.25rem", marginTop: "0.75rem" } }, [
-    el("button", { class: "ctx-btn signal-item", onClick: () => { state.ui.activeReply = m; close(); document.dispatchEvent(new CustomEvent("orbit:reply", { detail: m })); } }, [el("i", { "data-lucide": "reply", style: { marginRight: "0.5rem" } }), "Reply"]),
-    el("button", { class: "ctx-btn signal-item", onClick: () => { navigator.clipboard?.writeText(m.text || ""); toast("Copied", "success", "check"); close(); } }, [el("i", { "data-lucide": "copy", style: { marginRight: "0.5rem" } }), "Copy"]),
-  ]);
-  const body = el("div", {}, [picker, items]);
-  const close = openSheet({ body });
-}
-
-function openChatCustomize(chatId, settings) {
-  const themes = [
-    { name: "night", bg: "hsl(232 28% 11%)" },
-    { name: "lavender", bg: "linear-gradient(135deg, hsl(258 40% 22%), hsl(280 40% 18%))" },
-    { name: "ocean", bg: "linear-gradient(135deg, hsl(210 60% 18%), hsl(190 60% 14%))" },
-    { name: "rose", bg: "linear-gradient(135deg, hsl(340 35% 22%), hsl(20 40% 18%))" },
-    { name: "mint", bg: "linear-gradient(135deg, hsl(158 30% 18%), hsl(188 35% 16%))" },
-    { name: "paper", bg: "hsl(40 20% 95%)" }
-  ];
-  const swatches = el("div", { class: "theme-swatches" });
-  themes.forEach(t => {
-    const b = el("button", { style: { background: t.bg }, onClick: async () => {
-      await updateChatSettings(chatId, { ...settings, bg: t.bg });
-      swatches.querySelectorAll("button").forEach(x => x.classList.remove("is-active"));
-      b.classList.add("is-active");
-      document.querySelector(".chat-pane")?.style.setProperty("--chat-bg", t.bg);
-    } });
-    if (settings.bg === t.bg) b.classList.add("is-active");
-    swatches.append(b);
-  });
-  const shapes = el("div", { class: "bubble-shapes" });
-  ["round", "square"].forEach(shape => {
-    const sBtn = el("button", { class: settings.bubble === shape ? "is-active" : "", text: shape, onClick: async () => {
-      await updateChatSettings(chatId, { ...settings, bubble: shape });
-      shapes.querySelectorAll("button").forEach(x => x.classList.remove("is-active"));
-      sBtn.classList.add("is-active");
-      document.querySelector(".chat-pane")?.style.setProperty("--bubble-r", shape === "square" ? "8px" : "18px");
-    } });
-    shapes.append(sBtn);
-  });
-  const body = el("div", {}, [
-    el("h3", { text: "Customize this Signal", style: { marginBottom: "0.75rem" } }),
-    el("div", { class: "muted text-sm", style: { marginBottom: "0.5rem" }, text: "Wallpaper" }),
-    swatches,
-    el("div", { class: "muted text-sm", style: { margin: "0.75rem 0 0.5rem" }, text: "Bubble shape" }),
-    shapes
-  ]);
-  openSheet({ body });
-}
-
-function renderChatCompose(chatId, other) {
-  const wrap = el("div", { class: "chat-compose" });
-  const replyBar = el("div", { class: "reply-bar hidden" });
-  const ta = el("textarea", { class: "chat-input", placeholder: "Send a Signal", rows: 1 });
-  const send = el("button", { class: "chat-send", "aria-label": "Send" }, [el("i", { "data-lucide": "send" })]);
-  ta.addEventListener("input", () => {
-    ta.style.height = "auto";
-    ta.style.height = Math.min(ta.scrollHeight, 120) + "px";
-  });
-  ta.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send.click(); }
-  });
-  const showReply = (m) => {
-    replyBar.innerHTML = "";
-    replyBar.classList.remove("hidden");
-    replyBar.append(
-      el("i", { "data-lucide": "reply" }),
-      el("span", {}, [el("span", { class: "who", text: "Replying to " + (m.authorName || "them") + " · " }), el("span", { class: "muted truncate", text: (m.text || "").slice(0, 60) })]),
-      el("button", { class: "close", onClick: () => { state.ui.activeReply = null; replyBar.classList.add("hidden"); refreshIcons(); } }, [el("i", { "data-lucide": "x" })])
-    );
-    refreshIcons();
-  };
-  document.addEventListener("orbit:reply", (e) => showReply(e.detail));
-  send.addEventListener("click", async () => {
-    const text = ta.value.trim();
-    if (!text) return;
-    send.classList.add("sending");
-    setTimeout(() => send.classList.remove("sending"), 500);
-    const reply = state.ui.activeReply ? { authorName: state.ui.activeReply.authorName, text: state.ui.activeReply.text || "" } : null;
-    state.ui.activeReply = null;
-    replyBar.classList.add("hidden");
-    ta.value = ""; ta.style.height = "auto";
-    try {
-      await sendMessage(chatId, { author: state.profile, text, replyTo: reply });
-      if (other?.uid && other.uid !== state.user.uid) {
-        createNotification(other.uid, { kind: "signal", fromUid: state.user.uid, fromName: state.profile.displayName, chatId });
-      }
-    } catch (err) { toast(err.message, "error", "alert-circle"); }
-  });
-  wrap.append(replyBar, el("div", { class: "chat-input-row" }, [ta, send]));
-  refreshIcons();
-  return wrap;
-}
-
-async function openSignalWith(uid) {
-  if (!uid || uid === state.user.uid) return;
-  const id = await openOrCreateDirectChat(state.user.uid, uid);
-  navigate(`/signals/${id}`);
-}
-
-/* ============================================================
-   SCREEN: PROFILE
-   ============================================================ */
-async function renderProfile(view, params) {
-  const handle = params[0];
-  let profile;
-  if (!handle || handle === state.profile.handle) profile = state.profile;
-  else profile = await getUserByHandle(handle);
-  if (!profile) { view.append(emptyState("compass", "Profile not found", "")); return; }
-
-  const inner = el("div", { class: "view-inner wide" });
-  inner.append(el("div", { class: "profile-cover" }));
-  const head = el("div", { class: "profile-head" }, [
-    avatar(profile, "xl"),
-    el("div", { class: "profile-info" }, [
-      (() => { const n = el("div", { class: "profile-name", text: profile.displayName }); if (profile.verified) n.append(beaconIcon("lg")); return n; })(),
-      el("div", { class: "profile-handle", text: "@" + profile.handle }),
-      profile.locationLabel ? el("div", { class: "muted text-sm row", style: { marginTop: "0.25rem" } }, [el("i", { "data-lucide": "map-pin" }), profile.locationLabel]) : null
-    ]),
-    el("div", { style: { paddingBottom: "0.5rem" } }, profileActions(profile))
-  ]);
-  inner.append(head);
-  if (profile.bio) inner.append(el("p", { class: "profile-bio", text: profile.bio }));
-  inner.append(el("div", { class: "profile-stats" }, [
-    el("div", { class: "profile-stat" }, [el("span", { class: "n", text: String((profile.constellation || []).length) }), el("span", { class: "l", text: "Constellation" })]),
-    el("div", { class: "profile-stat" }, [el("span", { class: "n", text: String(profile.satellites || 0) }), el("span", { class: "l", text: "Satellites" })])
-  ]));
-
-  // Tabs
-  const tabs = el("div", { class: "profile-tabs" });
-  const beamsBtn = el("button", { class: "profile-tab is-active", text: "Beams" });
-  const flicksBtn = el("button", { class: "profile-tab", text: "Flicks" });
-  tabs.append(beamsBtn, flicksBtn);
-  inner.append(tabs);
-  const list = el("div");
-  inner.append(list);
-  view.append(inner);
-
-  let kind = "beams";
-  const subscribe = () => {
-    teardown();
-    list.innerHTML = "";
-    const u = listenBeams(items => {
-      list.innerHTML = "";
-      const filtered = kind === "flicks" ? items.filter(b => b.imageURL) : items;
-      if (!filtered.length) list.append(emptyState("sparkles", "No " + kind + " yet", "Send a Beam to brighten this profile."));
-      else if (kind === "flicks") {
-        const grid = el("div", { class: "media-grid" });
-        filtered.forEach(b => {
-          const tile = el("div", { class: "tile", onClick: () => navigate(`/beam/${b.id}`) });
-          if (b.videoURL) {
-            tile.append(el("video", { src: b.videoURL, muted: "", playsinline: "", preload: "metadata" }));
-            tile.append(el("span", { class: "tile-play" }, [el("i", { "data-lucide": "play" })]));
-          } else {
-            tile.append(el("img", { src: b.imageURL, alt: "" }));
-          }
-          grid.append(tile);
-        });
-        list.append(grid);
-      } else {
-        filtered.forEach(b => list.append(renderBeam(b)));
-      }
-      refreshIcons();
-    }, { authorUid: profile.uid });
-    state.unsub.push(u);
-  };
-  beamsBtn.addEventListener("click", () => { kind = "beams"; beamsBtn.classList.add("is-active"); flicksBtn.classList.remove("is-active"); subscribe(); });
-  flicksBtn.addEventListener("click", () => { kind = "flicks"; flicksBtn.classList.add("is-active"); beamsBtn.classList.remove("is-active"); subscribe(); });
-  subscribe();
-}
-function profileActions(profile) {
-  if (profile.uid === state.user.uid) {
-    return [el("button", { class: "btn btn-ghost", onClick: openEditProfile }, [el("i", { "data-lucide": "pencil" }), "Edit"])];
-  }
-  const following = (state.profile.constellation || []).includes(profile.uid);
-  const followBtn = el("button", { class: following ? "btn btn-ghost" : "btn btn-primary" }, [following ? "Following" : "Add to Constellation"]);
-  followBtn.addEventListener("click", async () => {
-    if (following) { await unfollow(state.user.uid, profile.uid); toast("Removed from Constellation", "info", "user-minus"); }
-    else { await follow(state.user.uid, profile.uid); toast("Added to your Constellation", "success", "user-plus");
-      createNotification(profile.uid, { kind: "follow", fromUid: state.user.uid, fromName: state.profile.displayName });
-    }
-    state.profile = await getUserProfile(state.user.uid);
-    router();
-  });
-  const signalBtn = el("button", { class: "btn btn-soft", onClick: () => openSignalWith(profile.uid) }, [el("i", { "data-lucide": "message-square" }), "Signal"]);
-  return [followBtn, signalBtn];
-}
-function openEditProfile() {
-  const name = el("input", { value: state.profile.displayName });
-  const bio = el("textarea", { rows: 3, value: state.profile.bio || "" });
-  const photoInput = el("input", { type: "file", accept: "image/*", style: { display: "none" } });
-  let photoFile = null;
-  let photoPreview = state.profile.photoURL;
-  const ava = el("div", { class: "avatar lg", style: { margin: "0 auto 1rem" } });
-  if (photoPreview) ava.append(el("img", { src: photoPreview }));
-  else ava.textContent = initials(state.profile.displayName);
-  photoInput.addEventListener("change", () => {
-    photoFile = photoInput.files?.[0]; if (!photoFile) return;
-    const u = URL.createObjectURL(photoFile);
-    ava.innerHTML = ""; ava.append(el("img", { src: u }));
-  });
-  const submit = el("button", { class: "btn btn-primary btn-block" }, ["Save"]);
-  submit.addEventListener("click", async () => {
-    submit.disabled = true;
-    try {
-      let photoURL = state.profile.photoURL;
-      if (photoFile) { const u = await uploadToCloudinary(photoFile, { folder: "orbit/avatars" }); photoURL = u.url; }
-      await updateMyProfile(state.user.uid, { displayName: name.value.trim(), bio: bio.value.trim(), photoURL });
-      state.profile = await getUserProfile(state.user.uid);
-      state.cache.profilesByUid.set(state.user.uid, state.profile);
-      renderSidebarMe();
-      toast("Profile updated", "success", "check");
-      close(); router();
-    } catch (e) { toast(e.message, "error", "alert-circle"); submit.disabled = false; }
-  });
-  const body = el("div", {}, [
-    ava,
-    el("div", { style: { textAlign: "center", marginBottom: "1rem" } }, [el("button", { class: "btn btn-ghost", onClick: () => photoInput.click() }, [el("i", { "data-lucide": "image" }), "Change photo"])]),
-    photoInput,
-    el("div", { class: "field" }, [el("label", { text: "Display name" }), name]),
-    el("div", { class: "field" }, [el("label", { text: "Bio" }), bio]),
-    submit
-  ]);
-  const close = openModal({ title: "Edit profile", body });
-}
-
-/* ============================================================
-   SCREEN: SETTINGS
-   ============================================================ */
-function renderSettings(view) {
-  const inner = el("div", { class: "view-inner" });
-  inner.append(viewHeader("Settings"));
-
-  // Appearance
-  const themeRow = el("div", { class: "setting-row" }, [
-    el("div", { class: "label" }, [el("div", { text: "Theme" }), el("div", { class: "desc", text: "Light, dark, or follow system" })]),
-    (() => {
-      const sel = el("select");
-      ["dark", "light", "system"].forEach(v => sel.append(el("option", { value: v, text: v })));
-      sel.value = localStorage.getItem("orbit:theme") || "dark";
-      sel.addEventListener("change", () => applyTheme(sel.value));
-      return sel;
-    })()
-  ]);
-  const accentRow = el("div", { class: "setting-row" }, [
-    el("div", { class: "label" }, [el("div", { text: "Accent" }), el("div", { class: "desc", text: "Tints highlights, buttons, and Glows" })]),
-    (() => {
-      const wrap = el("div", { class: "accent-row" });
-      Object.keys(ACCENTS).forEach(name => {
-        const a = ACCENTS[name];
-        const dot = el("button", { class: "accent-dot" + (localStorage.getItem("orbit:accent") === name ? " is-active" : ""), style: { background: `linear-gradient(135deg, hsl(${a.h} ${a.s}% ${a.l}%), hsl(${a.h2} ${a.s2}% ${a.l2}%))` } });
-        dot.addEventListener("click", () => { applyAccent(name); updateMyProfile(state.user.uid, { accent: name }); wrap.querySelectorAll(".accent-dot").forEach(x => x.classList.remove("is-active")); dot.classList.add("is-active"); });
-        wrap.append(dot);
-      });
-      return wrap;
-    })()
-  ]);
-  inner.append(el("div", { class: "settings-section" }, [el("h3", { text: "Appearance" }), themeRow, accentRow]));
-
-  // Beacon
-  const beaconStatus = state.profile.verified
-    ? el("div", { class: "row gap-1" }, [beaconIcon(), "Beacon active" + (state.profile.locationLabel ? ` · ${state.profile.locationLabel}` : "")])
-    : el("button", { class: "btn btn-primary", onClick: () => navigate("/verify") }, [el("i", { "data-lucide": "shield-check" }), "Get my Beacon"]);
-  inner.append(el("div", { class: "settings-section" }, [
-    el("h3", { text: "Beacon" }),
-    el("div", { class: "setting-row" }, [
-      el("div", { class: "label" }, [el("div", { text: "Verification" }), el("div", { class: "desc", text: "We use your approximate location once to confirm you're real." })]),
-      beaconStatus
-    ])
-  ]));
-
-  // Account
-  inner.append(el("div", { class: "settings-section" }, [
-    el("h3", { text: "Account" }),
-    el("div", { class: "setting-row" }, [
-      el("div", { class: "label" }, [el("div", { text: state.user.email || "—" }), el("div", { class: "desc", text: "Signed in as @" + state.profile.handle })]),
-      el("button", { class: "btn btn-danger", onClick: async () => { await signOutUser(); } }, [el("i", { "data-lucide": "log-out" }), "Sign out"])
-    ])
-  ]));
-
-  view.append(inner);
-}
-
-/* ============================================================
-   SCREEN: NOTIFICATIONS
-   ============================================================ */
-function renderNotifications(view) {
-  const inner = el("div", { class: "view-inner" });
-  inner.append(viewHeader("Notifications", el("button", { class: "btn btn-ghost", onClick: async () => { await markAllNotificationsRead(state.user.uid); toast("All marked read", "success", "check"); } }, ["Mark all read"])));
-  const list = el("div");
-  inner.append(list);
-  view.append(inner);
-  const u = listenNotifications(state.user.uid, items => {
-    list.innerHTML = "";
-    if (!items.length) { list.append(emptyState("bell", "All quiet", "When people Glow, Signal, or join your Constellation, you'll see it here.")); refreshIcons(); return; }
-    items.forEach(n => {
-      const labels = {
-        glow: `${n.fromName} sent a Glow on your Beam`,
-        echo: `${n.fromName} Echoed your Beam`,
-        signal: `${n.fromName} sent you a Signal`,
-        follow: `${n.fromName} added you to their Constellation`
-      };
-      const icons = { glow: "heart", echo: "message-circle", signal: "message-square", follow: "user-plus" };
-      const item = el("div", { class: "notif-item", onClick: () => {
-        if (n.kind === "signal") navigate(`/signals/${n.chatId}`);
-        else if (n.kind === "follow") navigate(`/profile/${n.fromName}`);
-        else if (n.kind === "glow" || n.kind === "echo") navigate(`/beam/${n.beamId}`);
-      } }, [
-        el("div", { class: "icn-wrap" }, [el("i", { "data-lucide": icons[n.kind] || "bell" })]),
-        el("div", { class: "flex-1" }, [el("div", { text: labels[n.kind] || "New activity" }), el("div", { class: "when", text: timeAgo(n.createdAt) })])
-      ]);
-      list.append(item);
-    });
-    refreshIcons();
-  });
-  state.unsub.push(u);
-}
-
-/* ============================================================
-   SCREEN: SEARCH
-   ============================================================ */
-function renderSearch(view) {
-  const inner = el("div", { class: "view-inner" });
-  inner.append(viewHeader("Search"));
-  const input = el("input", { class: "signals-search", placeholder: "Search people..." });
-  const list = el("div", { style: { marginTop: "1rem" } });
-  inner.append(input, list);
-  view.append(inner);
-  let t;
-  input.addEventListener("input", () => {
-    clearTimeout(t);
-    t = setTimeout(async () => {
-      const results = await searchPeople(input.value.trim());
-      list.innerHTML = "";
-      if (!results.length) { list.append(emptyState("search", "No matches", "Try a different name or handle.")); refreshIcons(); return; }
-      results.forEach(p => {
-        const row = el("div", { class: "signal-item", onClick: () => navigate(`/profile/${p.handle}`) }, [
-          avatar(p),
-          el("div", { class: "meta" }, [
-            (() => { const n = el("div", { class: "name", text: p.displayName }); if (p.verified) n.append(beaconIcon()); return n; })(),
-            el("div", { class: "preview", text: "@" + p.handle })
-          ])
-        ]);
-        list.append(row);
-      });
-      refreshIcons();
-    }, 250);
-  });
-  setTimeout(() => input.focus(), 50);
-}
-
-/* ============================================================
-   SCREEN: BEACON / VERIFY
-   ============================================================ */
-function renderVerify(view) {
-  const inner = el("div", { class: "view-inner" });
-  const card = el("div", { class: "card verify-card" }, [
-    el("div", { class: "verify-orb" }, [el("i", { "data-lucide": "shield-check" })]),
-    el("h2", { text: state.profile.verified ? "You already have a Beacon" : "Earn your Beacon" }),
-    el("p", { class: "muted", style: { maxWidth: "420px", margin: "0.5rem auto 1.25rem", lineHeight: "1.5" }, text: state.profile.verified
-      ? "Your profile is verified — the Beacon shows next to your name everywhere."
-      : "We'll ask your browser for your approximate location. We use it once to confirm you're a real person in a real place. We don't track you afterward."
-    }),
-    state.profile.verified ? null : el("button", { class: "btn btn-primary", onClick: doVerify }, [el("i", { "data-lucide": "shield-check" }), "Enable Location & Get My Beacon"])
-  ]);
-  inner.append(card);
-  view.append(inner);
-}
-async function doVerify() {
-  if (!navigator.geolocation) { toast("Your browser doesn't support location", "error", "alert-circle"); return; }
-  toast("Asking for location…", "info", "map-pin");
-  navigator.geolocation.getCurrentPosition(async (pos) => {
-    let label = null;
-    try {
-      const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${pos.coords.latitude}&longitude=${pos.coords.longitude}&localityLanguage=en`);
-      const data = await r.json();
-      label = [data.city, data.principalSubdivision, data.countryName].filter(Boolean).join(", ");
-    } catch {}
-    await grantBeacon(state.user.uid, label);
-    state.profile = await getUserProfile(state.user.uid);
-    celebrate();
-    toast("Beacon granted", "success", "shield-check");
-    setTimeout(() => router(), 600);
-  }, (err) => {
-    toast(err.code === 1 ? "Location permission denied" : "Could not get location", "error", "alert-circle");
-  }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 });
-}
-function celebrate() {
-  const root = el("div", { class: "celebrate" });
-  document.body.append(root);
-  const colors = ["hsl(var(--accent))", "hsl(var(--accent-2))", "white"];
-  for (let i = 0; i < 60; i++) {
-    const p = el("div", { class: "particle", style: {
-      left: Math.random() * 100 + "vw",
-      top: -10 + "px",
-      background: colors[i % colors.length],
-      animationDelay: (Math.random() * 0.4) + "s",
-      animationDuration: (1.2 + Math.random() * 1.4) + "s"
-    } });
-    root.append(p);
-  }
-  setTimeout(() => root.remove(), 2400);
-}
-
-/* ============================================================
-   SIDEBAR ME (signed-in card)
-   ============================================================ */
-function renderSidebarMe() {
-  const wrap = $("#sidebar-me");
-  if (!wrap || !state.profile) return;
-  wrap.innerHTML = "";
-  wrap.append(el("div", { class: "row gap-1", style: { padding: "0.5rem", background: "hsl(var(--surface))", borderRadius: "12px", border: "1px solid hsl(var(--border-soft))" } }, [
-    avatar(state.profile, "sm"),
-    el("div", { class: "flex-1", style: { minWidth: 0 } }, [
-      (() => { const n = el("div", { class: "fw-600 truncate", text: state.profile.displayName }); if (state.profile.verified) n.append(beaconIcon()); return n; })(),
-      el("div", { class: "text-xs muted truncate", text: "@" + state.profile.handle })
-    ]),
-    el("button", { class: "btn-icon", onClick: async () => await signOutUser(), title: "Sign out" }, [el("i", { "data-lucide": "log-out" })])
-  ]));
-  refreshIcons();
-}
-
-/* ============================================================
-   GLOBAL LISTENERS (badges)
-   ============================================================ */
-let globalUnsubs = [];
-function startGlobalListeners() {
-  stopGlobalListeners();
-  // Notifications badge
-  globalUnsubs.push(listenNotifications(state.user.uid, items => {
-    const unread = items.filter(n => !n.read).length;
-    const b = $("#nav-notif-badge");
-    b.textContent = String(unread);
-    b.classList.toggle("hidden", unread === 0);
-  }));
-  // Chat badge
-  globalUnsubs.push(listenMyChats(state.user.uid, chats => {
-    const total = chats.reduce((sum, c) => sum + (c.unread?.[state.user.uid] || 0), 0);
-    const b = $("#nav-signals-badge");
-    b.textContent = String(total);
-    b.classList.toggle("hidden", total === 0);
-    $("#bn-signals-dot").classList.toggle("hidden", total === 0);
-  }));
-}
-function stopGlobalListeners() { globalUnsubs.forEach(u => u()); globalUnsubs = []; }
-
-/* ============================================================
-   BOOT
-   ============================================================ */
-function showAuthScreen() {
-  $("#boot").classList.add("hidden");
-  $("#auth-screen").classList.remove("hidden");
-  $("#app-shell").classList.add("hidden");
-}
-function showAppShell() {
-  $("#boot").classList.add("hidden");
-  $("#auth-screen").classList.add("hidden");
-  $("#app-shell").classList.remove("hidden");
-  refreshIcons();
-}
-
-setupAuthScreen();
-
-$("#btn-compose").addEventListener("click", () => openCompose());
-$("#bn-compose").addEventListener("click", () => openCompose());
-$("#btn-theme")?.addEventListener("click", toggleTheme);
-// Run once on boot to sync the toggle icon
-applyTheme(localStorage.getItem("orbit:theme") || "dark");
-
-// Default route
-if (!location.hash) location.hash = "#/stream";
-
-watchAuth(async (user) => {
-  if (!user) {
-    state.user = null;
-    state.profile = null;
-    teardown();
-    stopGlobalListeners();
-    showAuthScreen();
-    return;
-  }
-  state.user = user;
-  state.profile = await ensureUserProfile(user);
-  state.cache.profilesByUid.set(user.uid, state.profile);
-  if (state.profile.accent) applyAccent(state.profile.accent);
-  showAppShell();
-  renderSidebarMe();
-  startGlobalListeners();
-  router();
-});
+})();
