@@ -2,177 +2,247 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<meta name="theme-color" content="#0b0b0b" />
-<title>PITCH — the social app for hustlers</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PITCH — The Social App for Hustlers</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="styles.css" />
+<meta name="theme-color" content="#000000" />
+<meta name="description" content="PITCH — the social app for hustlers. Post your products, grow your sales, own your market." />
 </head>
 <body class="theme-dark">
 
-<!-- SETUP SCREEN (shown if Firebase config is not filled in) -->
+<!-- FIREBASE SETUP NOTICE -->
 <div id="setupScreen" class="setup-screen hidden">
   <div class="setup-card">
-    <div class="logo-mark">PITCH</div>
-    <h1>Almost ready</h1>
-    <p>Fill in your Firebase and Cloudinary keys at the top of <code>app.js</code>, then refresh this page.</p>
+    <div class="logo-mark xl">PITCH</div>
+    <h1>Firebase Setup Needed</h1>
+    <p>Open <code>public/app.js</code> and fill in your Firebase config inside <code>FIREBASE_CONFIG</code>.</p>
     <ol>
-      <li>Create a free Firebase project at <b>console.firebase.google.com</b></li>
-      <li>Enable <b>Authentication → Email/Password</b> and <b>Firestore Database</b></li>
-      <li>Copy your <b>Firebase config</b> into the <code>FIREBASE_CONFIG</code> object</li>
-      <li>Create a free Cloudinary account, make an <b>unsigned upload preset</b></li>
-      <li>Paste your <b>cloud name</b> and <b>preset name</b> into <code>CLOUDINARY</code></li>
+      <li>Go to <strong>Firebase Console</strong></li>
+      <li>Create a project and enable Firestore + Auth</li>
+      <li>Paste the config in <code>app.js</code></li>
     </ol>
-    <p class="setup-foot">Firestore security rules are at the bottom of <code>app.js</code>.</p>
+    <p><code>firestore.rules</code> should allow read/write for <code>request.auth != null</code></p>
   </div>
 </div>
 
 <!-- AUTH SCREEN -->
 <div id="authScreen" class="auth-screen hidden">
   <div class="auth-card">
-    <div class="logo-mark big">PITCH</div>
-    <p class="auth-tag">where every video is a hustle</p>
+    <div class="logo-mark xl">PITCH</div>
+    <p class="auth-tagline">the social app for hustlers</p>
+
     <div class="auth-tabs">
       <button class="auth-tab active" data-tab="login">Log in</button>
       <button class="auth-tab" data-tab="signup">Sign up</button>
     </div>
+
+    <!-- Login -->
     <form id="loginForm" class="auth-form">
-      <input type="email" id="loginEmail" placeholder="Email" autocomplete="email" required />
-      <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password" required />
-      <button type="submit" class="btn-primary">Log in</button>
-      <div class="auth-error" id="loginError"></div>
+      <input type="email" id="loginEmail" placeholder="Email" required autocomplete="email" />
+      <input type="password" id="loginPassword" placeholder="Password" required autocomplete="current-password" />
+      <div id="loginError" class="auth-error"></div>
+      <button type="submit" class="btn-primary" style="justify-content:center">Log In</button>
     </form>
+
+    <!-- Sign up -->
     <form id="signupForm" class="auth-form hidden">
-      <input type="text" id="signupName" placeholder="Your name (or business name)" required />
-      <input type="text" id="signupHandle" placeholder="Username (a-z, 0-9, _)" required />
-      <input type="email" id="signupEmail" placeholder="Email" autocomplete="email" required />
-      <input type="password" id="signupPassword" placeholder="Password (min 6 chars)" minlength="6" required />
-      <button type="submit" class="btn-primary">Create account</button>
-      <div class="auth-error" id="signupError"></div>
+      <input type="text" id="signupName" placeholder="Full name" required maxlength="60" />
+      <input type="text" id="signupHandle" placeholder="Username (e.g. taiwo_sells)" required maxlength="30" />
+      <input type="email" id="signupEmail" placeholder="Email" required autocomplete="email" />
+      <input type="password" id="signupPassword" placeholder="Password (6+ characters)" required autocomplete="new-password" />
+      <div id="signupError" class="auth-error"></div>
+      <button type="submit" class="btn-primary" style="justify-content:center">Create Account</button>
     </form>
   </div>
 </div>
 
-<!-- ONBOARDING (after signup, set city + trade) -->
-<div id="onboardScreen" class="auth-screen hidden">
+<!-- ONBOARDING -->
+<div id="onboardScreen" class="setup-screen hidden">
   <div class="auth-card">
-    <div class="logo-mark">PITCH</div>
-    <h2 style="margin:8px 0 4px;font-size:22px">One last step</h2>
-    <p class="auth-tag">tell us your trade so we can plug you into the right rooms</p>
+    <div class="logo-mark xl">PITCH</div>
+    <p class="auth-tagline" style="margin-bottom:24px">Almost there — tell us your hustle</p>
     <form id="onboardForm" class="auth-form">
-      <input type="text" id="onboardCity" placeholder="Your city (e.g. Lagos, Mumbai, Nairobi)" required />
+      <input type="text" id="onboardCity" placeholder="Your city (e.g. Lagos, Nairobi, Accra)" required />
       <select id="onboardTrade" required>
-        <option value="">What's your hustle?</option>
+        <option value="">Select your trade / hustle</option>
         <option>Fashion / Clothing</option>
         <option>Food / Baking / Catering</option>
         <option>Hair / Braiding / Barbing</option>
         <option>Beauty / Makeup / Nails</option>
-        <option>Reselling / Thrifting</option>
         <option>Tech / Gadgets</option>
+        <option>Reselling / Thrifting</option>
         <option>Tutoring / Coaching</option>
-        <option>Driving / Delivery</option>
         <option>Crafts / Art / Photography</option>
-        <option>Fitness / Training</option>
-        <option>Freelance / Services</option>
-        <option>Other</option>
+        <option>Cleaning / Home Services</option>
+        <option>Transport / Delivery</option>
+        <option>Agriculture / Farming</option>
+        <option>Event Planning</option>
+        <option>Health / Wellness</option>
+        <option>Finance / Investments</option>
+        <option>Other Hustle</option>
       </select>
-      <textarea id="onboardBio" placeholder="One line about what you do (optional)" maxlength="120"></textarea>
-      <button type="submit" class="btn-primary">Enter PITCH</button>
+      <textarea id="onboardBio" placeholder="Tell people what you sell in one line (optional)"></textarea>
+      <button type="submit" class="btn-primary" style="justify-content:center">Enter PITCH →</button>
     </form>
   </div>
 </div>
 
-<!-- MAIN APP SHELL -->
+<!-- APP SHELL -->
 <div id="appShell" class="app-shell hidden">
-  <!-- TOP NAV (desktop + mobile) -->
-  <header class="top-nav">
+
+  <!-- TOP NAV -->
+  <nav class="top-nav">
     <div class="nav-inner">
       <div class="nav-left">
-        <a href="#/home" class="logo-mark">PITCH</a>
+        <a class="logo-mark" href="#/home">PITCH</a>
       </div>
       <div class="nav-center">
         <div class="search-wrap">
-          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-          <input type="search" id="searchInput" placeholder="Search hustlers, trades, cities, pitches..." />
-          <div id="searchDropdown" class="search-dropdown hidden"></div>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="text" id="searchInput" placeholder="Search hustlers, products, cities..." autocomplete="off" />
+          <div class="search-dropdown hidden" id="searchDropdown"></div>
         </div>
       </div>
       <div class="nav-right">
-        <a href="#/home" class="nav-icon" title="Home" data-route="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></a>
-        <a href="#/reels" class="nav-icon" title="Reels" data-route="reels"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m10 8 6 4-6 4z" fill="currentColor"/></svg></a>
-        <a href="#/create" class="nav-icon" title="New post" data-route="create"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/></svg></a>
-        <a href="#/rooms" class="nav-icon" title="Trade rooms" data-route="rooms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 8h2a2 2 0 0 1 2 2v9l-3-2h-7a2 2 0 0 1-2-2v-1"/><path d="M14 14V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11l3-2h7a2 2 0 0 0 2-2z"/></svg></a>
-        <a href="#/dms" class="nav-icon" title="Messages" data-route="dms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></a>
-        <a href="#/notifications" class="nav-icon notif-icon" title="Notifications" data-route="notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="notif-dot hidden" id="notifDot"></span></a>
-        <a href="#/profile" class="nav-icon avatar-nav" title="My stall" data-route="profile">
-          <img id="navAvatar" alt="me" src="" />
+        <a class="nav-icon" data-route="reels" href="#/reels" title="Reels">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m10 8 6 4-6 4z" fill="currentColor"/></svg>
+        </a>
+        <a class="nav-icon" data-route="notifications" href="#/notifications" title="Notifications" style="position:relative">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+          <span class="notif-dot hidden" id="notifDot"></span>
+        </a>
+        <a class="nav-icon" data-route="profile" href="#/profile" title="Profile">
+          <img id="navAvatar" src="" alt="me" />
         </a>
       </div>
     </div>
-  </header>
+  </nav>
 
   <!-- MAIN LAYOUT -->
-  <main class="main-layout">
-    <!-- LEFT SIDEBAR (desktop) -->
+  <div class="main-layout">
+
+    <!-- LEFT SIDEBAR -->
     <aside class="sidebar-left">
-      <a href="#/home" class="side-link" data-route="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg> Home</a>
-      <a href="#/reels" class="side-link" data-route="reels"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m10 8 6 4-6 4z" fill="currentColor"/></svg> Reels</a>
-      <a href="#/create" class="side-link" data-route="create"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/></svg> Create</a>
-      <a href="#/rooms" class="side-link" data-route="rooms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11l3-2h7a2 2 0 0 0 2-2z"/></svg> Trade rooms</a>
-      <a href="#/dms" class="side-link" data-route="dms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> Messages</a>
-      <a href="#/leaderboard" class="side-link" data-route="leaderboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6m12 0h1.5a2.5 2.5 0 0 1 0 5H18M4 22h16M10 14.66V17c0 .55.47.98.97 1.21l1.06.49a2 2 0 0 0 1.94 0l1.06-.49c.5-.23.97-.66.97-1.21v-2.34M18 2H6v7a6 6 0 0 0 12 0z"/></svg> Local Top 10</a>
-      <a href="#/challenges" class="side-link" data-route="challenges"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z"/><path d="M14 2v6h6"/><path d="m9 14 2 2 4-4"/></svg> Challenges</a>
-      <a href="#/earnings" class="side-link" data-route="earnings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg> Earnings</a>
-      <a href="#/settings" class="side-link" data-route="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Settings</a>
-      <button id="logoutBtn" class="side-link side-logout"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> Log out</button>
+      <button class="side-create-btn" onclick="location.hash='#/create'">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        New Pitch
+      </button>
+
+      <a class="side-link" data-route="home" href="#/home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        Home
+      </a>
+      <a class="side-link" data-route="reels" href="#/reels">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m10 8 6 4-6 4z" fill="currentColor"/></svg>
+        Reels
+      </a>
+      <a class="side-link" data-route="discover" href="#/discover">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+        Discover
+      </a>
+      <a class="side-link" data-route="rooms" href="#/rooms">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11l3-2h7a2 2 0 0 0 2-2z"/></svg>
+        Trade Rooms
+      </a>
+      <a class="side-link" data-route="dms" href="#/dms">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Messages
+      </a>
+
+      <div class="side-divider"></div>
+
+      <a class="side-link" data-route="leaderboard" href="#/leaderboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="18" y="3" width="4" height="18"/><rect x="10" y="8" width="4" height="13"/><rect x="2" y="13" width="4" height="8"/></svg>
+        Leaderboard
+      </a>
+      <a class="side-link" data-route="challenges" href="#/challenges">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6m12 0h1.5a2.5 2.5 0 0 1 0 5H18M4 22h16M10 14.66V17c0 .55.47.98.97 1.21l1.06.49a2 2 0 0 0 1.94 0l1.06-.49c.5-.23.97-.66.97-1.21v-2.34M18 2H6v7a6 6 0 0 0 12 0z"/></svg>
+        Challenges
+      </a>
+      <a class="side-link" data-route="earnings" href="#/earnings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        Earnings
+      </a>
+
+      <div class="side-divider"></div>
+
+      <a class="side-link" data-route="settings" href="#/settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Settings
+      </a>
+      <button class="side-link side-logout" id="logoutBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Log Out
+      </button>
     </aside>
 
-    <!-- CENTER (the active view) -->
-    <section id="view" class="view-area"></section>
+    <!-- CENTER -->
+    <main id="view" class="view-area"></main>
 
-    <!-- RIGHT SIDEBAR (desktop) -->
+    <!-- RIGHT SIDEBAR -->
     <aside class="sidebar-right">
       <div class="side-card">
         <div class="side-card-head">
-          <h3>Local Top 10</h3>
-          <a href="#/leaderboard" class="side-card-more">See all</a>
+          <h3>Top Hustlers Near You</h3>
+          <a class="side-card-more" href="#/leaderboard">See all</a>
         </div>
-        <div id="topRail" class="top-rail"></div>
+        <div id="topRail"></div>
       </div>
       <div class="side-card">
         <div class="side-card-head">
           <h3>Live Challenge</h3>
-          <a href="#/challenges" class="side-card-more">All</a>
+          <a class="side-card-more" href="#/challenges">All</a>
         </div>
-        <div id="challengeRail" class="challenge-rail"></div>
+        <div id="challengeRail"></div>
       </div>
       <div class="side-card">
         <div class="side-card-head">
-          <h3>Suggested stalls</h3>
+          <h3>Hustlers in Your Trade</h3>
+          <a class="side-card-more" href="#/discover">Discover</a>
         </div>
-        <div id="suggestedRail" class="suggested-rail"></div>
+        <div id="suggestedRail"></div>
       </div>
       <div class="side-foot">
-        <span>PITCH</span> · <a href="#/settings">Privacy</a> · <a href="#/settings">Terms</a> · © 2026
+        <a href="#">About</a> · <a href="#">Privacy</a> · <a href="#">Terms</a><br/>
+        © 2025 PITCH · Built for hustlers
       </div>
     </aside>
-  </main>
+  </div>
 
-  <!-- MOBILE BOTTOM TABS -->
-  <nav class="bottom-tabs">
-    <a href="#/home" class="bt" data-route="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></a>
-    <a href="#/reels" class="bt" data-route="reels"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m10 8 6 4-6 4z" fill="currentColor"/></svg></a>
-    <a href="#/create" class="bt bt-create" data-route="create"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></a>
-    <a href="#/rooms" class="bt" data-route="rooms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11l3-2h7a2 2 0 0 0 2-2z"/></svg></a>
-    <a href="#/profile" class="bt" data-route="profile"><img id="bottomAvatar" class="bt-avatar" alt="me" src="" /></a>
-  </nav>
+  <!-- BOTTOM TABS (mobile) -->
+  <div class="bottom-tabs">
+    <a class="bt" data-route="home" href="#/home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      Home
+    </a>
+    <a class="bt" data-route="discover" href="#/discover">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+      Discover
+    </a>
+    <a class="bt" data-route="create" href="#/create">
+      <div class="bt-create">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+      </div>
+    </a>
+    <a class="bt" data-route="rooms" href="#/rooms">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11l3-2h7a2 2 0 0 0 2-2z"/></svg>
+      Rooms
+    </a>
+    <a class="bt" data-route="profile" href="#/profile">
+      <img id="bottomAvatar" class="bt-avatar" src="" alt="me" />
+      Profile
+    </a>
+  </div>
+
 </div>
 
-<!-- MODAL ROOT -->
+<!-- MODAL -->
 <div id="modalRoot" class="modal-root hidden"></div>
-<!-- TOAST ROOT -->
+
+<!-- TOASTS -->
 <div id="toastRoot" class="toast-root"></div>
 
 <script type="module" src="app.js"></script>
