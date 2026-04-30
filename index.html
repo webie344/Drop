@@ -1,270 +1,257 @@
 <!doctype html>
 <html lang="en" data-theme="dark">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
-  <meta name="theme-color" content="#0b0b12" />
-  <title>Halo — A quieter social</title>
-  <meta name="description" content="Halo — a quiet, premium social space for Beams, Loops, and Rooms." />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css" />
-  <link rel="stylesheet" href="chat.css" />
-</head>
-<body>
-
-  <!-- ============ SPLASH ============ -->
-  <div id="splash" class="splash">
-    <div class="splash-ring"></div>
-    <div class="splash-word">Halo</div>
-  </div>
-
-  <!-- ============ AUTH ============ -->
-  <section id="auth" class="auth hidden">
-    <div class="auth-bg"></div>
-    <div class="auth-card">
-      <div class="auth-brand">
-        <div class="brand-mark"><span class="brand-ring"></span><span class="brand-dot"></span></div>
-        <h1 class="brand-name">Halo</h1>
-        <p class="brand-tag">A quieter kind of social.</p>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+    <meta name="theme-color" content="#0b0b10" />
+    <title>Orbit — connect, share, chat</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/remixicon@4.5.0/fonts/remixicon.css"
+    />
+    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="chat.css" />
+  </head>
+  <body>
+    <!-- ============================================================ -->
+    <!-- BOOT SPLASH                                                   -->
+    <!-- ============================================================ -->
+    <div id="boot" class="boot">
+      <div class="boot-logo">
+        <div class="orbit-mark"><span></span><span></span><span></span></div>
+        <div class="boot-name">Orbit</div>
       </div>
-
-      <div class="auth-tabs">
-        <button class="auth-tab active" data-mode="signin">Sign in</button>
-        <button class="auth-tab" data-mode="signup">Create account</button>
-        <span class="auth-tab-ind"></span>
-      </div>
-
-      <form id="auth-form" class="auth-form" autocomplete="on" novalidate>
-        <label class="field" data-only="signup">
-          <span>Display name</span>
-          <input type="text" id="auth-name" placeholder="What should we call you?" autocomplete="name" />
-        </label>
-        <label class="field">
-          <span>Email</span>
-          <input type="email" id="auth-email" placeholder="you@orbit.space" required autocomplete="email" />
-        </label>
-        <label class="field">
-          <span>Password</span>
-          <input type="password" id="auth-pass" placeholder="At least 6 characters" minlength="6" required autocomplete="current-password" />
-        </label>
-        <button type="submit" class="btn btn-primary auth-submit">
-          <span class="btn-label">Continue</span>
-          <span class="btn-spinner"></span>
-        </button>
-        <p class="auth-error" id="auth-error"></p>
-        <p class="auth-fineprint">By continuing you agree to keep your Orbit kind.</p>
-      </form>
     </div>
-  </section>
 
-  <!-- ============ APP SHELL ============ -->
-  <main id="app" class="app hidden">
-
-    <!-- desktop sidebar -->
-    <aside class="sidenav">
-      <a class="brand" href="#/" data-route="/">
-        <span class="brand-mark"><span class="brand-ring"></span><span class="brand-dot"></span></span>
-        <span class="brand-name">Halo</span>
-      </a>
-
-      <nav class="nav">
-        <a class="nav-item" href="#/" data-route="/" data-tip="Stream">
-          <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-          <span>Stream</span>
-        </a>
-        <a class="nav-item" href="#/loops" data-route="/loops" data-tip="Loops">
-          <svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M10 9l5 3-5 3V9z" fill="currentColor"/></svg>
-          <span>Loops</span>
-        </a>
-        <a class="nav-item" href="#/rooms" data-route="/rooms" data-tip="Rooms">
-          <svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4V5z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/></svg>
-          <span>Rooms</span>
-        </a>
-        <a class="nav-item" href="#/halo" data-route="/halo" data-tip="Halo">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" stroke="currentColor" stroke-width="1.6" fill="none"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/></svg>
-          <span>Halo</span>
-        </a>
-        <a class="nav-item" href="#/me" data-route="/me" data-tip="You">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="9" r="3.5" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M5 19c1.5-3.5 4-5 7-5s5.5 1.5 7 5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
-          <span>You</span>
-        </a>
-      </nav>
-
-      <button class="sidenav-compose" id="open-compose">
-        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        <span>New beam</span>
-      </button>
-
-      <div class="sidenav-foot">
-        <button class="icon-btn" id="open-cmd" title="Quick jump (⌘K)">
-          <svg viewBox="0 0 24 24"><path d="M11 4a7 7 0 105.4 11.4l3.3 3.3 1.4-1.4-3.3-3.3A7 7 0 0011 4z" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
-        </button>
-        <button class="icon-btn" id="toggle-theme" title="Toggle theme">
-          <svg viewBox="0 0 24 24" class="ic-moon"><path d="M20 14.5A8 8 0 1110.5 4a7 7 0 009.5 10.5z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/></svg>
-          <svg viewBox="0 0 24 24" class="ic-sun"><circle cx="12" cy="12" r="3.6" stroke="currentColor" stroke-width="1.6" fill="none"/><g stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 3v2.5"/><path d="M12 18.5V21"/><path d="M3 12h2.5"/><path d="M18.5 12H21"/><path d="M5.5 5.5l1.8 1.8"/><path d="M16.7 16.7l1.8 1.8"/><path d="M5.5 18.5l1.8-1.8"/><path d="M16.7 7.3l1.8-1.8"/></g></svg>
-        </button>
-        <button class="icon-btn" id="signout-btn" title="Sign out">
-          <svg viewBox="0 0 24 24"><path d="M14 7V5a2 2 0 00-2-2H6a2 2 0 00-2 2v14a2 2 0 002 2h6a2 2 0 002-2v-2M10 12h11m0 0l-3-3m3 3l-3 3" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
+    <!-- ============================================================ -->
+    <!-- AUTH SCREEN                                                   -->
+    <!-- ============================================================ -->
+    <section id="auth" class="screen auth-screen hidden">
+      <div class="auth-bg">
+        <div class="auth-blob b1"></div>
+        <div class="auth-blob b2"></div>
+        <div class="auth-blob b3"></div>
       </div>
-    </aside>
+      <div class="auth-card">
+        <div class="auth-brand">
+          <div class="orbit-mark sm"><span></span><span></span><span></span></div>
+          <h1>Orbit</h1>
+        </div>
+        <p class="auth-tag">A new gravity for your circles.</p>
 
-    <!-- main view mount -->
-    <section id="view" class="view"></section>
+        <div class="auth-tabs">
+          <button class="auth-tab active" data-tab="signin">Sign in</button>
+          <button class="auth-tab" data-tab="signup">Create account</button>
+        </div>
 
-    <!-- mobile bottom nav -->
-    <nav class="bottomnav">
-      <a class="bn-item" href="#/" data-route="/">
-        <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-        <span>Stream</span>
-      </a>
-      <a class="bn-item" href="#/loops" data-route="/loops">
-        <svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z" stroke="currentColor" stroke-width="1.7" fill="none"/><path d="M10 9l5 3-5 3V9z" fill="currentColor"/></svg>
-        <span>Loops</span>
-      </a>
-      <button class="bn-fab" id="open-compose-mobile" aria-label="New beam">
-        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
-      </button>
-      <a class="bn-item" href="#/rooms" data-route="/rooms">
-        <svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4V5z" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linejoin="round"/></svg>
-        <span>Rooms</span>
-      </a>
-      <a class="bn-item" href="#/me" data-route="/me">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="9" r="3.5" stroke="currentColor" stroke-width="1.7" fill="none"/><path d="M5 19c1.5-3.5 4-5 7-5s5.5 1.5 7 5" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round"/></svg>
-        <span>You</span>
-      </a>
-    </nav>
-  </main>
-
-  <!-- ============ MODALS ============ -->
-
-  <!-- Compose -->
-  <div class="modal" id="compose-modal" aria-hidden="true">
-    <div class="modal-scrim" data-close></div>
-    <div class="modal-card compose-card">
-      <header class="modal-head">
-        <h3>New beam</h3>
-        <button class="icon-btn" data-close aria-label="Close">
-          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        </button>
-      </header>
-      <div class="compose-body">
-        <textarea id="compose-text" placeholder="What's catching your light right now?" rows="5"></textarea>
-        <div class="compose-image-preview" id="compose-image-preview"></div>
-        <div class="compose-actions">
-          <label class="btn btn-ghost">
-            <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.6" fill="none"/><circle cx="8.5" cy="10.5" r="1.5" fill="currentColor"/><path d="M3 17l5-5 5 5 3-3 5 5" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
-            <span>Add image</span>
-            <input type="file" accept="image/*" id="compose-image" hidden />
+        <form id="signinForm" class="auth-form">
+          <label>Email
+            <input type="email" name="email" placeholder="you@orbit.app" required autocomplete="email"/>
           </label>
-          <button class="btn btn-primary" id="compose-publish">
-            <span class="btn-label">Send beam</span>
-            <span class="btn-spinner"></span>
-          </button>
+          <label>Password
+            <input type="password" name="password" placeholder="••••••••" required autocomplete="current-password"/>
+          </label>
+          <button type="submit" class="btn primary block">Enter Orbit</button>
+        </form>
+
+        <form id="signupForm" class="auth-form hidden">
+          <label>Name
+            <input type="text" name="name" placeholder="Your name" required/>
+          </label>
+          <label>Username
+            <input type="text" name="username" placeholder="@username" pattern="[a-zA-Z0-9_]{3,20}" required/>
+          </label>
+          <label>Email
+            <input type="email" name="email" placeholder="you@orbit.app" required autocomplete="email"/>
+          </label>
+          <label>Password
+            <input type="password" name="password" placeholder="At least 8 characters" required minlength="8" autocomplete="new-password"/>
+          </label>
+          <button type="submit" class="btn primary block">Create my Orbit</button>
+        </form>
+
+        <div class="auth-divider"><span>or</span></div>
+        <button id="googleBtn" class="btn ghost block">
+          <i class="ri-google-fill"></i> Continue with Google
+        </button>
+
+        <div class="auth-foot">
+          <button id="themeAuthToggle" class="link"><i class="ri-contrast-2-line"></i> Switch theme</button>
         </div>
       </div>
-    </div>
-  </div>
+    </section>
 
-  <!-- Create Room -->
-  <div class="modal" id="create-room-modal" aria-hidden="true">
-    <div class="modal-scrim" data-close></div>
-    <div class="modal-card">
-      <header class="modal-head">
-        <h3>New room</h3>
-        <button class="icon-btn" data-close aria-label="Close">
-          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        </button>
-      </header>
-      <div class="modal-body">
-        <label class="field">
-          <span>Room name</span>
-          <input type="text" id="room-name" placeholder="e.g. Late night thinkers" />
-        </label>
-        <label class="field">
-          <span>Cover emoji</span>
-          <input type="text" id="room-emoji" placeholder="✨" maxlength="2" />
-        </label>
-        <label class="field">
-          <span>Add members by handle (comma-separated)</span>
-          <input type="text" id="room-members" placeholder="@aria, @sol, @nori" />
-        </label>
-        <button class="btn btn-primary full" id="create-room-btn">Create room</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Command palette -->
-  <div class="modal cmd" id="command-palette" aria-hidden="true">
-    <div class="modal-scrim" data-close></div>
-    <div class="cmd-card">
-      <input type="text" id="cmd-input" placeholder="Jump to a room, beam, or person…" />
-      <ul id="cmd-list" class="cmd-list"></ul>
-      <footer class="cmd-foot">
-        <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
-        <span><kbd>↵</kbd> open</span>
-        <span><kbd>Esc</kbd> close</span>
-      </footer>
-    </div>
-  </div>
-
-  <!-- Chat theme picker -->
-  <div class="modal" id="chat-theme-modal" aria-hidden="true">
-    <div class="modal-scrim" data-close></div>
-    <div class="modal-card">
-      <header class="modal-head">
-        <h3>Customize this room</h3>
-        <button class="icon-btn" data-close aria-label="Close">
-          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        </button>
-      </header>
-      <div class="modal-body">
-        <div class="theme-group">
-          <label class="theme-label">Wallpaper</label>
-          <div class="wallpaper-grid" id="wallpaper-grid"></div>
-        </div>
-        <div class="theme-group">
-          <label class="theme-label">Bubble color</label>
-          <div class="bubble-color-grid" id="bubble-color-grid"></div>
-        </div>
-        <div class="theme-group">
-          <label class="theme-label">Bubble shape</label>
-          <div class="bubble-shape-grid">
-            <button class="bubble-shape-btn" data-shape="rounded">Rounded</button>
-            <button class="bubble-shape-btn" data-shape="square">Square</button>
-            <button class="bubble-shape-btn" data-shape="pill">Pill</button>
+    <!-- ============================================================ -->
+    <!-- MAIN APP SHELL                                                -->
+    <!-- ============================================================ -->
+    <main id="app" class="app hidden">
+      <!-- Top bar -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="icon-btn only-mobile" id="openSidebar" aria-label="menu"><i class="ri-menu-line"></i></button>
+          <div class="brand" data-route="feed">
+            <div class="orbit-mark xs"><span></span><span></span><span></span></div>
+            <span class="brand-name">Orbit</span>
           </div>
         </div>
-        <button class="btn btn-primary full" id="save-theme-btn">Save look</button>
+        <div class="topbar-search">
+          <i class="ri-search-line"></i>
+          <input id="globalSearch" type="text" placeholder="Search people, groups, posts" />
+        </div>
+        <div class="topbar-right">
+          <button class="icon-btn" id="themeToggle" aria-label="toggle theme"><i class="ri-sun-line"></i></button>
+          <button class="icon-btn" id="notifBtn" aria-label="notifications"><i class="ri-notification-3-line"></i><span class="pill" id="notifPill" hidden>0</span></button>
+          <button class="avatar-btn" id="meBtn" aria-label="profile"><img id="meAvatar" alt="me"/></button>
+        </div>
+      </header>
+
+      <div class="layout">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+          <nav class="nav">
+            <button class="nav-item" data-route="feed"><i class="ri-home-5-line"></i><span>Feed</span></button>
+            <button class="nav-item" data-route="reels"><i class="ri-film-line"></i><span>Reels</span></button>
+            <button class="nav-item" data-route="chats"><i class="ri-chat-3-line"></i><span>Chats</span><span class="pill" id="chatsPill" hidden>0</span></button>
+            <button class="nav-item" data-route="groups"><i class="ri-group-2-line"></i><span>Groups</span></button>
+            <button class="nav-item" data-route="explore"><i class="ri-compass-3-line"></i><span>Explore</span></button>
+            <button class="nav-item" data-route="saved"><i class="ri-bookmark-line"></i><span>Saved</span></button>
+            <button class="nav-item" data-route="settings"><i class="ri-settings-3-line"></i><span>Settings</span></button>
+          </nav>
+          <button class="btn primary block compose-btn" id="composeBtn"><i class="ri-add-line"></i> Create</button>
+          <div class="sidebar-foot">
+            <button class="link" id="signOutBtn"><i class="ri-logout-box-r-line"></i> Sign out</button>
+          </div>
+        </aside>
+
+        <!-- Routed content -->
+        <section class="content" id="content">
+          <!-- views injected by router -->
+        </section>
+
+        <!-- Right rail (desktop) -->
+        <aside class="rightrail" id="rightrail">
+          <div class="rail-card">
+            <div class="rail-title">Suggested for you</div>
+            <div id="suggestList" class="suggest-list"></div>
+          </div>
+          <div class="rail-card">
+            <div class="rail-title">Trending in Orbit</div>
+            <div id="trendList" class="trend-list"></div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- Mobile bottom nav -->
+      <nav class="bottomnav only-mobile">
+        <button class="bn" data-route="feed"><i class="ri-home-5-line"></i></button>
+        <button class="bn" data-route="reels"><i class="ri-film-line"></i></button>
+        <button class="bn compose" id="composeBtnMobile"><i class="ri-add-line"></i></button>
+        <button class="bn" data-route="chats"><i class="ri-chat-3-line"></i></button>
+        <button class="bn" data-route="profile"><i class="ri-user-line"></i></button>
+      </nav>
+    </main>
+
+    <!-- ============================================================ -->
+    <!-- COMPOSE / CREATE MODAL                                        -->
+    <!-- ============================================================ -->
+    <div class="modal hidden" id="composeModal">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h3>Create</h3>
+          <button class="icon-btn" data-close-modal><i class="ri-close-line"></i></button>
+        </div>
+        <div class="compose-tabs">
+          <button class="ct active" data-ctab="post"><i class="ri-image-line"></i> Post</button>
+          <button class="ct" data-ctab="reel"><i class="ri-film-line"></i> Reel</button>
+          <button class="ct" data-ctab="group"><i class="ri-group-2-line"></i> Group</button>
+        </div>
+
+        <form id="postForm" class="compose-pane">
+          <textarea name="text" placeholder="What's orbiting your mind?" rows="4"></textarea>
+          <input type="file" id="postMedia" accept="image/*" hidden />
+          <div class="post-preview" id="postPreview"></div>
+          <div class="compose-actions">
+            <button type="button" class="icon-btn" id="postPickMedia" title="Add image"><i class="ri-image-add-line"></i></button>
+            <button type="submit" class="btn primary">Post</button>
+          </div>
+        </form>
+
+        <form id="reelForm" class="compose-pane hidden">
+          <input type="file" id="reelMedia" accept="video/*" required />
+          <input type="text" name="caption" placeholder="Caption (optional)" />
+          <div class="compose-actions">
+            <button type="submit" class="btn primary">Upload reel</button>
+          </div>
+        </form>
+
+        <form id="groupForm" class="compose-pane hidden">
+          <input type="text" name="name" placeholder="Group name" required />
+          <textarea name="about" placeholder="What's this group about?" rows="3"></textarea>
+          <label class="row gap">
+            <input type="checkbox" name="isPublic" checked /> Public group (anyone can join)
+          </label>
+          <div class="compose-actions">
+            <button type="submit" class="btn primary">Create group</button>
+          </div>
+        </form>
       </div>
     </div>
-  </div>
 
-  <!-- Emoji picker -->
-  <div class="popover" id="emoji-popover" aria-hidden="true">
-    <div class="emoji-grid" id="emoji-grid"></div>
-  </div>
+    <!-- ============================================================ -->
+    <!-- CHAT CUSTOMIZATION DRAWER                                     -->
+    <!-- ============================================================ -->
+    <div class="drawer hidden" id="chatCustomize">
+      <div class="drawer-card">
+        <div class="modal-head">
+          <h3>Customize chat</h3>
+          <button class="icon-btn" data-close-drawer><i class="ri-close-line"></i></button>
+        </div>
+        <div class="cust-section">
+          <div class="cust-label">Wallpaper</div>
+          <div class="wallpapers" id="wallpapers"></div>
+        </div>
+        <div class="cust-section">
+          <div class="cust-label">Bubble color</div>
+          <div class="swatches" id="bubbleSwatches"></div>
+        </div>
+        <div class="cust-section">
+          <div class="cust-label">Bubble shape</div>
+          <div class="seg" id="bubbleShape">
+            <button data-shape="rounded" class="active">Rounded</button>
+            <button data-shape="balloon">Balloon</button>
+            <button data-shape="square">Square</button>
+          </div>
+        </div>
+        <div class="cust-section">
+          <div class="cust-label">Font</div>
+          <div class="seg" id="bubbleFont">
+            <button data-font="inter" class="active">Sans</button>
+            <button data-font="jakarta">Display</button>
+            <button data-font="mono">Mono</button>
+          </div>
+        </div>
+        <div class="cust-section">
+          <div class="cust-label">Text size</div>
+          <input type="range" id="bubbleSize" min="13" max="20" value="15"/>
+        </div>
+      </div>
+    </div>
 
-  <!-- Message action menu -->
-  <div class="popover msg-menu" id="msg-menu" aria-hidden="true">
-    <button data-act="reply"><svg viewBox="0 0 24 24"><path d="M9 7l-5 5 5 5M4 12h11a5 5 0 015 5v2" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg> Reply</button>
-    <button data-act="react"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" fill="none"/><circle cx="9" cy="10" r="1" fill="currentColor"/><circle cx="15" cy="10" r="1" fill="currentColor"/><path d="M8.5 14.5c1 1.2 2.2 1.8 3.5 1.8s2.5-.6 3.5-1.8" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg> React</button>
-    <button data-act="copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.6" fill="none"/><rect x="4" y="4" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.6" fill="none"/></svg> Copy</button>
-    <button data-act="edit" class="own"><svg viewBox="0 0 24 24"><path d="M14 4l6 6-10 10H4v-6L14 4z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/></svg> Edit</button>
-    <button data-act="delete" class="own danger"><svg viewBox="0 0 24 24"><path d="M5 7h14M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2m-7 0v12a2 2 0 002 2h6a2 2 0 002-2V7" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg> Delete</button>
-  </div>
+    <!-- ============================================================ -->
+    <!-- LIGHTWEIGHT TOAST                                             -->
+    <!-- ============================================================ -->
+    <div id="toast" class="toast hidden"></div>
 
-  <!-- Toast -->
-  <div id="toast" class="toast"></div>
-
-  <!-- ============ FIREBASE (compat SDK) ============ -->
-  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
-
-  <script src="firebase.js"></script>
-  <script src="app.js"></script>
-</body>
+    <!-- ============================================================ -->
+    <!-- FIREBASE + APP                                                -->
+    <!-- ============================================================ -->
+    <script type="module" src="app.js"></script>
+    <script type="module" src="chat.js"></script>
+  </body>
 </html>
