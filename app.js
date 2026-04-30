@@ -252,7 +252,7 @@ const ROUTES = {
 };
 function parseRoute() {
   const hash = location.hash || "#/stream";
-  const [_, name, ...rest] = hash.replace(/^#\//, "").split("/");
+  const [name, ...rest] = hash.replace(/^#\//, "").split("/");
   return { name: name || "stream", params: rest };
 }
 function navigate(path) { location.hash = path; }
@@ -334,7 +334,7 @@ function skeletonBeam() {
    SCREEN: STREAM
    ============================================================ */
 function renderStream(view) {
-  const inner = el("div", { class: "view-inner" });
+  const inner = el("div", { class: "view-inner stream" });
   inner.append(viewHeader("Stream"));
   inner.append(composerCard());
   const list = el("div", { class: "beam-list" });

@@ -69,17 +69,32 @@
 .view-header h1, .view-header h2 { margin: 0; }
 
 /* ============================================================
-   STREAM (feed)
+   STREAM (feed) — edge-to-edge, IG/FB style
    ============================================================ */
-.beam {
-  background: hsl(var(--surface));
-  border: 1px solid hsl(var(--border-soft));
-  border-radius: var(--r-lg);
-  padding: 1.1rem 1.2rem 0.85rem;
-  margin-bottom: 1rem;
-  transition: border-color 0.2s ease, transform 0.15s ease;
+
+/* Stream container: full-width on mobile, narrow column on desktop, no side gutters */
+.view-inner.stream {
+  max-width: 600px;
+  padding: 0 0 5rem;
+  margin: 0 auto;
 }
-.beam:hover { border-color: hsl(var(--border)); }
+.view-inner.stream .view-header {
+  padding: 1rem 1rem;
+  background: hsl(var(--bg) / 0.92);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid hsl(var(--border-soft));
+}
+
+.beam {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid hsl(var(--border-soft));
+  border-radius: 0;
+  padding: 1rem 1rem 0.5rem;
+  margin: 0;
+  transition: border-color 0.25s ease;
+}
+.beam:hover { border-color: hsl(var(--border-soft)); }
 .beam-head { display: flex; align-items: center; gap: 0.7rem; margin-bottom: 0.7rem; }
 .beam-meta { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .beam-author { display: flex; align-items: center; gap: 0.35rem; font-weight: 600; }
@@ -93,13 +108,13 @@
 }
 .beam-body { font-size: 1rem; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
 .beam-image {
-  margin-top: 0.85rem;
-  border-radius: var(--r-md);
+  margin: 0.85rem -1rem 0;
+  border-radius: 0;
   overflow: hidden;
-  border: 1px solid hsl(var(--border-soft));
+  border: 0;
+  border-top: 1px solid hsl(var(--border-soft));
   background: hsl(var(--bg-2));
-  max-height: 520px;
-  display: grid; place-items: center;
+  display: block;
 }
 .beam-image img { width: 100%; height: auto; display: block; }
 .beam-actions {
@@ -136,30 +151,24 @@
   100% { transform: scale(20); opacity: 0; }
 }
 
-/* The "single Glow that visually separates posts" — divider after a glowed beam */
-.beam.has-glow + .beam, .beam.has-glow {
-  position: relative;
-}
-.beam.has-glow::after {
-  content: '';
-  display: block;
-  height: 1px;
-  margin: 1rem -1.2rem -0.85rem;
-  background: linear-gradient(90deg, transparent, hsl(var(--accent) / 0.6), transparent);
-  box-shadow: 0 0 12px hsl(var(--accent) / 0.5);
-  animation: divider-in 0.5s ease both;
+/* The "single Glow that visually separates posts" — luminous bottom divider after a glowed beam */
+.beam.has-glow {
+  border-bottom-color: hsl(var(--accent) / 0.55);
+  box-shadow: 0 1px 0 hsl(var(--accent) / 0.35), 0 1px 12px hsl(var(--accent) / 0.25);
+  transition: border-color 0.4s ease, box-shadow 0.4s ease;
 }
 @keyframes divider-in { from { opacity: 0; transform: scaleX(0.4); } to { opacity: 1; transform: scaleX(1); } }
 
-/* Composer card at top of stream */
+/* Composer card at top of stream — edge-to-edge, just a divider below */
 .composer-card {
-  background: hsl(var(--surface));
-  border: 1px solid hsl(var(--border-soft));
-  border-radius: var(--r-lg);
-  padding: 1rem 1.1rem;
-  margin-bottom: 1rem;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid hsl(var(--border-soft));
+  border-radius: 0;
+  padding: 0.85rem 1rem;
+  margin: 0;
   display: flex; gap: 0.75rem;
-  align-items: flex-start;
+  align-items: center;
 }
 .composer-card .quick-input {
   flex: 1;
