@@ -50,14 +50,22 @@ export async function uploadToCloudinary(file, opts = {}) {
   fd.append("file", file);
   fd.append("upload_preset", CLOUDINARY_CONFIG.uploadPreset);
   if (opts.folder) fd.append("folder", opts.folder);
-  const url = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CONFIG.cloudName}/${opts.resourceType || "image"}/upload`;
+  const isVideo = file.type?.startsWith("video/");
+  const resourceType = opts.resourceType || (isVideo ? "video" : "image");
+  const url = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CONFIG.cloudName}/${resourceType}/upload`;
   const res = await fetch(url, { method: "POST", body: fd });
   if (!res.ok) {
     const text = await res.text();
     throw new Error("Cloudinary upload failed: " + text);
   }
   const data = await res.json();
-  return { url: data.secure_url, publicId: data.public_id, width: data.width, height: data.height };
+  return {
+    url: data.secure_url,
+    publicId: data.public_id,
+    width: data.width, height: data.height,
+    duration: data.duration || null,
+    resourceType
+  };
 }
 
 /* ---------- Auth ---------- */
@@ -164,21 +172,48 @@ export async function unfollow(meUid, theirUid) {
 }
 
 /* ---------- Beams (posts) ---------- */
-export async function createBeam({ author, body, imageURL = null, circleId = null, kind = "beam" }) {
+export async function createBeam({ author, body, imageURL = null, videoURL = null, circleId = null, kind = "beam" }) {
+  const finalKind = videoURL ? "flick" : kind;
   const beam = {
     authorUid: author.uid,
     authorName: author.displayName,
     authorHandle: author.handle,
     authorPhoto: author.photoURL || null,
     authorVerified: !!author.verified,
-    body, imageURL, circleId, kind,
+    body, imageURL, videoURL, circleId, kind: finalKind,
     glows: [],
     glowsCount: 0,
-    repliesCount: 0,
+    echoesCount: 0,
     createdAt: serverTimestamp()
   };
   const ref = await addDoc(collection(db, "beams"), beam);
   return ref.id;
+}
+
+export async function getBeam(id) {
+  const snap = await getDoc(doc(db, "beams", id));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+export function listenBeam(id, cb) {
+  return onSnapshot(doc(db, "beams", id), snap => { if (snap.exists()) cb({ id: snap.id, ...snap.data() }); });
+}
+
+/* ---------- Echoes (comments on a Beam) ---------- */
+export async function addEcho(beamId, { author, text }) {
+  await addDoc(collection(db, "beams", beamId, "echoes"), {
+    authorUid: author.uid,
+    authorName: author.displayName,
+    authorHandle: author.handle,
+    authorPhoto: author.photoURL || null,
+    authorVerified: !!author.verified,
+    text,
+    createdAt: serverTimestamp()
+  });
+  await updateDoc(doc(db, "beams", beamId), { echoesCount: increment(1) });
+}
+export function listenEchoes(beamId, cb) {
+  const q = query(collection(db, "beams", beamId, "echoes"), orderBy("createdAt", "asc"), limit(200));
+  return onSnapshot(q, snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
 }
 
 export function listenBeams(cb, opts = {}) {
