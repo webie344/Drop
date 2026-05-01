@@ -274,6 +274,17 @@ html[data-theme="light"] .bubble:not(.from-me .bubble) .reply-quote { background
   position: absolute; top: -6px; right: -6px;
 }
 
+/* ---------- Bottom bar (reply + attach preview + composer, single grid row) ---------- */
+.chat-bottom-bar {
+  display: flex; flex-direction: column;
+  background: var(--bg-elev);
+  position: relative; z-index: 2;
+  border-top: 1px solid var(--line);
+}
+.chat-bottom-bar .reply-preview,
+.chat-bottom-bar .attach-preview { border-top: none; }
+.chat-bottom-bar .composer { border-top: 1px solid var(--line-soft); }
+
 /* ---------- Reply preview above composer ---------- */
 .reply-preview {
   display: flex; align-items: center; gap: 10px;
@@ -291,8 +302,7 @@ html[data-theme="light"] .bubble:not(.from-me .bubble) .reply-quote { background
   display: grid; grid-template-columns: auto 1fr auto auto;
   gap: 8px; align-items: end;
   padding: 10px 12px;
-  background: var(--bg-elev); border-top: 1px solid var(--line);
-  position: relative; z-index: 2;
+  background: var(--bg-elev);
   padding-bottom: calc(10px + env(safe-area-inset-bottom));
 }
 .composer .ctrl {

@@ -307,50 +307,58 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
   const messages = el("div", { class: "messages", id: "messages" });
   view.appendChild(messages);
 
-  // REPLY PREVIEW (hidden by default)
-  const replyPreview = el("div", { class: "reply-preview hidden", id: "replyPreview" });
-  view.appendChild(replyPreview);
+  // BOTTOM BAR — one grid child wrapping all bottom UI (reply, attach preview, composer)
+  const bottomBar = el("div", { class: "chat-bottom-bar", id: "chatBottomBar" });
 
-  // ATTACHMENT PREVIEW STRIP (hidden until file picked)
+  // Reply preview (hidden until replying)
+  const replyPreview = el("div", { class: "reply-preview hidden", id: "replyPreview" });
+  bottomBar.appendChild(replyPreview);
+
+  // Attachment preview strip (hidden until file picked)
   const attachPreview = el("div", { class: "attach-preview hidden", id: "attachPreviewStrip" });
-  view.appendChild(attachPreview);
+  bottomBar.appendChild(attachPreview);
 
   // COMPOSER
+  const composerField = el("div", { class: "field", id: "composerField", contenteditable: "true",
+    "data-placeholder": "Message", spellcheck: "true" });
+  composerField.addEventListener("input", () => {
+    const hasText = composerField.textContent.trim().length > 0;
+    const sendBtn = bottomBar.querySelector("#sendBtn");
+    if (sendBtn) sendBtn.disabled = !hasText && !pendingAttachment;
+    // typing indicator
+    if (!isGroup) {
+      updateDoc(doc(db, "chats", chatId), { typing: { [state.uid]: serverTimestamp() } }, { merge: true }).catch(async () => {
+        await setDoc(doc(db, "chats", chatId), { typing: { [state.uid]: serverTimestamp() } }, { merge: true });
+      });
+      clearTimeout(typingDebounce);
+      typingDebounce = setTimeout(() => {
+        updateDoc(doc(db, "chats", chatId), { [`typing.${state.uid}`]: deleteField() }).catch(() => {});
+      }, 2200);
+    }
+    localStorage.setItem(`orbit:draft:${chatId}`, composerField.innerText);
+  });
+  composerField.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+
   const composer = el("div", { class: "composer" },
     el("button", { class: "ctrl", title: "Emoji", onclick: toggleEmojiPicker },
       el("i", { class: "ri-emotion-line" })),
-    el("div", { class: "field", id: "composerField", contenteditable: "true",
-      "data-placeholder": "Message", spellcheck: "true",
-      oninput: () => {
-        const f = $("#composerField");
-        const hasText = f.textContent.trim().length > 0;
-        $("#sendBtn").disabled = !hasText && !pendingAttachment;
-        // typing indicator
-        if (!isGroup) {
-          updateDoc(doc(db, "chats", chatId), { typing: { [state.uid]: serverTimestamp() } }, { merge: true }).catch(async () => {
-            await setDoc(doc(db, "chats", chatId), { typing: { [state.uid]: serverTimestamp() } }, { merge: true });
-          });
-          clearTimeout(typingDebounce);
-          typingDebounce = setTimeout(() => {
-            updateDoc(doc(db, "chats", chatId), { [`typing.${state.uid}`]: deleteField() }).catch(() => {});
-          }, 2200);
-        }
-        // draft autosave
-        localStorage.setItem(`orbit:draft:${chatId}`, f.innerText);
-      },
-      onkeydown: (e) => {
-        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-      } }),
+    composerField,
     el("button", { class: "ctrl", title: "Attach photo/video", onclick: () => pickAttachment(chatId) },
       el("i", { class: "ri-image-add-line" })),
     el("button", { class: "send", id: "sendBtn", disabled: true, onclick: send },
       el("i", { class: "ri-send-plane-fill" })),
   );
-  view.appendChild(composer);
+  bottomBar.appendChild(composer);
+  view.appendChild(bottomBar);
 
   // Restore draft
   const draft = localStorage.getItem(`orbit:draft:${chatId}`);
-  if (draft) { $("#composerField").innerText = draft; $("#sendBtn").disabled = false; }
+  if (draft) {
+    composerField.innerText = draft;
+    bottomBar.querySelector("#sendBtn").disabled = false;
+  }
 
   // Live messages listener
   if (state.chatUnsub) state.chatUnsub();

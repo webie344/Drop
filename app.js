@@ -146,7 +146,12 @@ export const uploadToCloudinary = async (file, kind = "image") => {
   const res = await fetch(url, { method: "POST", body: fd });
   if (!res.ok) throw new Error("Upload failed");
   const json = await res.json();
-  return { url: json.secure_url, publicId: json.public_id, type: kind, width: json.width, height: json.height, duration: json.duration };
+  // Strip undefined fields — Firestore rejects them
+  const out = { url: json.secure_url, publicId: json.public_id, type: kind };
+  if (json.width)    out.width    = json.width;
+  if (json.height)   out.height   = json.height;
+  if (json.duration) out.duration = json.duration; // only present for video
+  return out;
 };
 
 // =========================================================================
@@ -582,79 +587,224 @@ const toggleSave = async (postId) => {
 };
 
 // =========================================================================
-// 9. REELS
+// 9. REELS — load once (no snapshot re-render), in-place DOM updates,
+//            TikTok-style comments slide-up, intersection autoplay
 // =========================================================================
-const renderReels = (root) => {
+const renderReels = async (root) => {
   const wrap = el("div", { class: "reels-wrap" });
   root.appendChild(wrap);
 
-  const q = query(collection(db, "reels"), orderBy("createdAt", "desc"), limit(30));
-  onSnapshot(q, async (snap) => {
-    wrap.innerHTML = "";
+  wrap.appendChild(el("div", { class: "reel-loading" },
+    el("i", { class: "ri-loader-4-line", style: "font-size:36px;color:white;animation:spin 1s linear infinite;" })));
+
+  let reels = [];
+  try {
+    const snap = await getDocs(query(collection(db, "reels"), orderBy("createdAt", "desc"), limit(30)));
     if (snap.empty) {
-      wrap.appendChild(el("div", { class: "empty", style: "color:white;height:100%;display:grid;place-items:center;" },
+      wrap.innerHTML = "";
+      wrap.appendChild(el("div", { class: "empty reel-empty-msg" },
         el("i", { class: "ri-film-line" }),
         el("div", { class: "t" }, "No reels yet"),
         el("div", {}, "Tap Create → Reel to upload one."),
       ));
       return;
     }
-    const reels = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    const authors = await Promise.all([...new Set(reels.map((r) => r.authorUid))].map(fetchUser));
-    const map = Object.fromEntries(authors.filter(Boolean).map((u) => [u.uid, u]));
-    reels.forEach((r) => wrap.appendChild(renderReel(r, map[r.authorUid])));
-    // Autoplay first, intersection-pause others
-    const vids = wrap.querySelectorAll("video");
-    const io = new IntersectionObserver((entries) => {
-      entries.forEach((e) => {
-        const v = e.target;
-        if (e.intersectionRatio > 0.7) v.play().catch(() => {});
-        else v.pause();
-      });
-    }, { threshold: [0, 0.7, 1] });
-    vids.forEach((v) => io.observe(v));
-  });
+    reels = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch (err) {
+    wrap.innerHTML = "";
+    wrap.appendChild(el("div", { class: "empty reel-empty-msg" },
+      el("i", { class: "ri-error-warning-line" }),
+      el("div", { class: "t" }, "Couldn't load reels"),
+    ));
+    return;
+  }
+
+  const authors = await Promise.all([...new Set(reels.map((r) => r.authorUid))].map(fetchUser));
+  const map = Object.fromEntries(authors.filter(Boolean).map((u) => [u.uid, u]));
+
+  wrap.innerHTML = "";
+  reels.forEach((r) => wrap.appendChild(renderReel(r, map[r.authorUid])));
+
+  // Intersection-observer autoplay (don't restart if already playing the same video)
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((e) => {
+      const v = e.target;
+      if (e.intersectionRatio >= 0.6) { if (v.paused) v.play().catch(() => {}); }
+      else { if (!v.paused) v.pause(); }
+    });
+  }, { threshold: [0, 0.6, 1] });
+  wrap.querySelectorAll("video").forEach((v) => io.observe(v));
 };
 
 const renderReel = (r, author) => {
-  const liked = (r.likes || []).includes(state.uid);
+  // Track liked state client-side to avoid re-render
+  let liked = (r.likes || []).includes(state.uid);
+  let likeCount = r.likeCount || 0;
+  let commentCount = r.commentCount || 0;
+
+  const likeIcon = el("i", { class: liked ? "ri-heart-fill" : "ri-heart-line" });
+  const likeNum  = el("span", { text: String(likeCount) });
+  const cmtNum   = el("span", { text: String(commentCount) });
+
+  const likeBtn = el("button", { class: `reel-act${liked ? " active" : ""}`,
+    onclick: async (e) => {
+      e.stopPropagation();
+      liked = !liked;
+      likeCount += liked ? 1 : -1;
+      likeIcon.className = liked ? "ri-heart-fill" : "ri-heart-line";
+      likeNum.textContent = String(likeCount);
+      likeBtn.classList.toggle("active", liked);
+      await updateDoc(doc(db, "reels", r.id), {
+        likes: liked ? arrayUnion(state.uid) : arrayRemove(state.uid),
+        likeCount: increment(liked ? 1 : -1),
+      }).catch(() => {});
+    }
+  }, likeIcon, likeNum);
+
+  const cmtBtn = el("button", { class: "reel-act",
+    onclick: (e) => { e.stopPropagation(); openReelComments(r.id, cmtNum); }
+  }, el("i", { class: "ri-chat-bubble-line" }), cmtNum);
+
+  const shareBtn = el("button", { class: "reel-act",
+    onclick: async (e) => {
+      e.stopPropagation();
+      try { await navigator.share?.({ title: "Reel on Orbit", url: r.media.url }); }
+      catch { await navigator.clipboard.writeText(r.media.url); toast("Link copied"); }
+    }
+  }, el("i", { class: "ri-share-forward-line" }), el("span", { text: "Share" }));
+
+  const video = el("video", { src: r.media.url, loop: true, playsinline: "", muted: "",
+    "webkit-playsinline": "",
+    onclick: (e) => { e.stopPropagation(); e.target.muted = !e.target.muted; }
+  });
+
   const node = el("div", { class: "reel" },
-    el("video", { src: r.media.url, loop: true, playsinline: "", muted: "true", "webkit-playsinline": "", onclick: (e) => {
-      e.target.muted = !e.target.muted;
-    }}),
+    video,
     el("div", { class: "reel-overlay" }),
     el("div", { class: "reel-info" },
-      el("div", { class: "name" },
-        el("img", { class: "avatar xs", src: avatarFor(author) }),
+      el("div", { class: "name", onclick: () => location.hash = `#profile/${author?.uid}` },
+        el("img", { class: "avatar sm", src: avatarFor(author) }),
         author?.name || "User",
         author?.verified ? el("span", { class: "verified", html: '<i class="ri-check-line"></i>' }) : null,
       ),
-      el("div", { class: "caption", text: r.caption || "" }),
+      r.caption ? el("div", { class: "caption", text: r.caption }) : null,
     ),
-    el("div", { class: "reel-actions" },
-      el("button", { class: `reel-act${liked ? " active" : ""}`, onclick: async () => {
-        await updateDoc(doc(db, "reels", r.id), {
-          likes: liked ? arrayRemove(state.uid) : arrayUnion(state.uid),
-          likeCount: increment(liked ? -1 : 1),
-        });
-      }},
-        el("i", { class: liked ? "ri-heart-fill" : "ri-heart-line" }),
-        String(r.likeCount || 0),
-      ),
-      el("button", { class: "reel-act", onclick: () => toast("Comments coming soon for reels — they live on the post page.") },
-        el("i", { class: "ri-chat-3-line" }),
-        String(r.commentCount || 0),
-      ),
-      el("button", { class: "reel-act", onclick: async () => {
-        try { await navigator.share?.({ title: "Reel on Orbit", url: r.media.url }); }
-        catch { await navigator.clipboard.writeText(r.media.url); toast("Link copied"); }
-      }},
-        el("i", { class: "ri-share-forward-line" }),
-        "Share",
-      ),
-    ),
+    el("div", { class: "reel-actions" }, likeBtn, cmtBtn, shareBtn),
   );
   return node;
+};
+
+// TikTok-style slide-up comments for a reel
+const openReelComments = (reelId, cmtNumEl) => {
+  // Remove any existing
+  $("#reelCommentsSheet")?.remove();
+
+  const sheet = el("div", { class: "reel-cmt-sheet", id: "reelCommentsSheet" });
+  const backdrop = el("div", { class: "reel-cmt-backdrop", onclick: () => sheet.remove() });
+
+  const inner = el("div", { class: "reel-cmt-inner" },
+    el("div", { class: "reel-cmt-handle" }),
+    el("div", { class: "reel-cmt-head" },
+      el("span", { class: "reel-cmt-title" }, "Comments"),
+      el("button", { class: "icon-btn", style: "width:32px;height:32px;", onclick: () => sheet.remove() },
+        el("i", { class: "ri-close-line" })),
+    ),
+    el("div", { class: "reel-cmt-list", id: `reelCmtList_${reelId}` },
+      el("div", { style: "text-align:center;padding:20px;color:var(--text-mute);" }, "Loading…")),
+    el("div", { class: "reel-cmt-composer" },
+      el("img", { class: "avatar xs", src: avatarFor(state.me) }),
+      el("input", { type: "text", id: "reelCmtInput", placeholder: "Add a comment…" }),
+      el("button", { class: "icon-btn", id: "reelCmtSend",
+        onclick: () => submitReelComment(reelId, cmtNumEl),
+      }, el("i", { class: "ri-send-plane-fill", style: "color:var(--primary);" })),
+    ),
+  );
+
+  const reelCmtInput = inner.querySelector("#reelCmtInput");
+  reelCmtInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submitReelComment(reelId, cmtNumEl);
+  });
+
+  sheet.appendChild(backdrop);
+  sheet.appendChild(inner);
+  document.body.appendChild(sheet);
+
+  // Load comments live
+  const listEl = inner.querySelector(`#reelCmtList_${reelId}`);
+  const unsub = onSnapshot(
+    query(collection(db, "reels", reelId, "comments"), orderBy("createdAt", "asc"), limit(100)),
+    async (snap) => {
+      listEl.innerHTML = "";
+      if (snap.empty) {
+        listEl.appendChild(el("div", { class: "reel-cmt-empty" }, "No comments yet. Be the first!"));
+        return;
+      }
+      const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const uids = [...new Set(items.map((c) => c.authorUid))];
+      const authors = await Promise.all(uids.map(fetchUser));
+      const amap = Object.fromEntries(authors.filter(Boolean).map((u) => [u.uid, u]));
+      items.forEach((c) => {
+        const a = amap[c.authorUid];
+        const row = el("div", { class: "reel-cmt-row" },
+          el("img", { class: "avatar xs", src: avatarFor(a), onclick: () => location.hash = `#profile/${a?.uid}` }),
+          el("div", { class: "reel-cmt-body" },
+            el("div", { class: "reel-cmt-name" },
+              a?.name || "User",
+              a?.verified ? el("span", { class: "verified", html: '<i class="ri-check-line"></i>' }) : null,
+            ),
+            el("div", { class: "reel-cmt-text", text: c.text }),
+            el("div", { class: "reel-cmt-meta" },
+              fmtTime(c.createdAt),
+              el("button", { class: "reel-cmt-reply-btn", onclick: () => {
+                reelCmtInput.value = `@${a?.username || "user"} `;
+                reelCmtInput.dataset.replyTo = c.id;
+                reelCmtInput.focus();
+              }}, "Reply"),
+              (c.likes || []).length
+                ? el("span", { style: "color:var(--danger);", text: `♥ ${c.likes.length}` })
+                : null,
+            ),
+          ),
+          el("button", { class: "reel-cmt-like",
+            onclick: async () => {
+              const has = (c.likes || []).includes(state.uid);
+              await updateDoc(doc(db, "reels", reelId, "comments", c.id), {
+                likes: has ? arrayRemove(state.uid) : arrayUnion(state.uid),
+              }).catch(() => {});
+            }
+          }, el("i", { class: (c.likes || []).includes(state.uid) ? "ri-heart-fill" : "ri-heart-line" })),
+        );
+        listEl.appendChild(row);
+      });
+      listEl.scrollTop = listEl.scrollHeight;
+    });
+
+  // Clean up listener when sheet is removed
+  const mo = new MutationObserver(() => {
+    if (!document.body.contains(sheet)) { unsub(); mo.disconnect(); }
+  });
+  mo.observe(document.body, { childList: true });
+};
+
+const submitReelComment = async (reelId, cmtNumEl) => {
+  const input = $("#reelCmtInput");
+  const text = (input?.value || "").trim();
+  if (!text) return;
+  input.value = "";
+  try {
+    await addDoc(collection(db, "reels", reelId, "comments"), {
+      authorUid: state.uid, text, likes: [],
+      replyTo: input.dataset.replyTo || null,
+      createdAt: serverTimestamp(),
+    });
+    await updateDoc(doc(db, "reels", reelId), { commentCount: increment(1) });
+    if (cmtNumEl) {
+      cmtNumEl.textContent = String(parseInt(cmtNumEl.textContent || "0") + 1);
+    }
+    delete input.dataset.replyTo;
+  } catch (err) {
+    toast("Couldn't post comment");
+  }
 };
 
 // =========================================================================
