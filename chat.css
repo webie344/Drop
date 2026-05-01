@@ -8,9 +8,10 @@
 .chats-route {
   display: grid;
   grid-template-columns: 340px 1fr;
-  /* flex:1 fills the .content.chat-active flex column; min-height:0 lets grid children shrink */
-  flex: 1;
-  min-height: 0;
+  /* grid-template-rows:1fr tells the single row to fill the container height */
+  grid-template-rows: 1fr;
+  /* height:100% resolves against the explicit-height .content.chat-active parent */
+  height: 100%;
   overflow: hidden;
 }
 .chats-list {
