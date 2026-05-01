@@ -78,6 +78,9 @@
   background-size: cover; background-position: center;
   position: relative;
   min-width: 0;
+  /* Critical: contain the grid so head/bottom-bar never scroll away */
+  overflow: hidden;
+  height: 100%;
 }
 .chat-view::before {
   /* Translucent veil so wallpapers don't fight readability */

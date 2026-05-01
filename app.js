@@ -108,7 +108,15 @@ export const escapeHtml = (s = "") =>
   s.replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
 
 export const linkify = (s = "") =>
-  escapeHtml(s).replace(/(https?:\/\/[^\s]+)/g, (m) => `<a href="${m}" target="_blank" rel="noopener">${m}</a>`);
+  escapeHtml(s)
+    .replace(/(https?:\/\/[^\s]+)/g, (m) => `<a href="${m}" target="_blank" rel="noopener">${m}</a>`)
+    .replace(/#(\w+)/g, (_, tag) => `<a class="hashtag" href="#explore/tag/${tag}">#${tag}</a>`)
+    .replace(/@(\w+)/g, (_, u) => `<a class="mention" href="#profile-u/${u}">@${u}</a>`);
+
+export const extractHashtags = (s = "") => {
+  const matches = s.match(/#(\w+)/g);
+  return matches ? [...new Set(matches.map((m) => m.slice(1).toLowerCase()))] : [];
+};
 
 export const toast = (msg, ms = 2200) => {
   const t = $("#toast");
@@ -329,7 +337,10 @@ $("#notifBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleNot
 // =========================================================================
 // 7. ROUTER
 // =========================================================================
-const routes = ["feed", "reels", "chats", "groups", "explore", "saved", "settings", "profile"];
+const routes = ["feed", "reels", "chats", "groups", "explore", "saved", "settings", "profile", "post", "profile-u"];
+
+// Track feed scroll so "back from post" returns to same position
+let _feedScrollY = 0;
 
 const router = () => {
   const hash = (location.hash || "#feed").replace(/^#/, "");
@@ -339,17 +350,24 @@ const router = () => {
   $$(".nav-item, .bn").forEach((b) => b.classList.toggle("active", b.dataset.route === target));
 
   const content = $("#content");
+  // Save scroll before leaving feed
+  if (content._currentRoute === "feed") {
+    _feedScrollY = content.querySelector(".feed-wrap")?.parentElement?.scrollTop || 0;
+  }
   content.innerHTML = "";
+  content._currentRoute = target;
 
   switch (target) {
-    case "feed":     return renderFeed(content);
-    case "reels":    return renderReels(content);
-    case "chats":    return document.dispatchEvent(new CustomEvent("orbit:open-chats", { detail: { peerUid: rest[0] || null } }));
-    case "groups":   return renderGroups(content);
-    case "explore":  return renderExplore(content);
-    case "saved":    return renderSaved(content);
-    case "settings": return renderSettings(content);
-    case "profile":  return renderProfile(content, rest[0] || state.uid);
+    case "feed":       renderFeed(content, _feedScrollY); _feedScrollY = 0; break;
+    case "reels":      renderReels(content); break;
+    case "chats":      document.dispatchEvent(new CustomEvent("orbit:open-chats", { detail: { peerUid: rest[0] || null } })); break;
+    case "groups":     renderGroups(content); break;
+    case "explore":    renderExplore(content, rest[0] === "tag" ? rest[1] : null); break;
+    case "saved":      renderSaved(content); break;
+    case "settings":   renderSettings(content); break;
+    case "profile":    renderProfile(content, rest[0] || state.uid); break;
+    case "profile-u":  renderProfileByUsername(content, rest[0]); break;
+    case "post":       renderPostDetail(content, rest[0]); break;
   }
 };
 window.addEventListener("hashchange", router);
@@ -377,7 +395,7 @@ $$(".nav-item, .sidebar-foot .link").forEach((b) =>
 // =========================================================================
 // 8. FEED — flat IG/FB style with separator lines + Trending lane
 // =========================================================================
-const renderFeed = (root) => {
+const renderFeed = (root, restoreScrollY = 0) => {
   const wrap = el("div", { class: "feed-wrap" });
 
   const stub = el("div", { class: "composer-stub" },
@@ -433,6 +451,11 @@ const renderFeed = (root) => {
     }
 
     posts.forEach((p) => list.appendChild(renderPost(p, byUid[p.authorUid])));
+
+    // Restore scroll position after coming back from a post
+    if (restoreScrollY > 0) {
+      requestAnimationFrame(() => { root.scrollTop = restoreScrollY; restoreScrollY = 0; });
+    }
   });
 
   // store unsub on root so route changes clean up
@@ -453,16 +476,59 @@ const renderTrendingCard = (p, author) => {
   );
 };
 
-const renderPost = (p, author) => {
+// Build a media carousel node for an array of media objects (or single obj)
+const renderMediaCarousel = (mediaRaw) => {
+  const items = Array.isArray(mediaRaw) ? mediaRaw : (mediaRaw ? [mediaRaw] : []);
+  if (!items.length) return null;
+  if (items.length === 1) {
+    const m = items[0];
+    if (m.type === "video") {
+      return el("div", { class: "post-media" },
+        el("video", { src: m.url, controls: "", playsinline: "", preload: "metadata", style: "width:100%;max-height:480px;border-radius:var(--radius);object-fit:cover;" }));
+    }
+    return el("div", { class: "post-media" }, el("img", { src: m.url, loading: "lazy" }));
+  }
+  // Multiple — simple slider
+  let cur = 0;
+  const slides = items.map((m, i) => {
+    const slide = el("div", { class: "carousel-slide", style: i === 0 ? "" : "display:none;" });
+    if (m.type === "video") {
+      slide.appendChild(el("video", { src: m.url, controls: "", playsinline: "", preload: "metadata" }));
+    } else {
+      slide.appendChild(el("img", { src: m.url, loading: "lazy" }));
+    }
+    return slide;
+  });
+  const dotsWrap = el("div", { class: "carousel-dots" });
+  const dots = items.map((_, i) => {
+    const d = el("button", { class: `carousel-dot${i === 0 ? " active" : ""}` });
+    dotsWrap.appendChild(d);
+    return d;
+  });
+  const go = (n) => {
+    slides[cur].style.display = "none"; dots[cur].classList.remove("active");
+    cur = (n + items.length) % items.length;
+    slides[cur].style.display = ""; dots[cur].classList.add("active");
+  };
+  const prev = el("button", { class: "carousel-arrow left", onclick: (e) => { e.stopPropagation(); go(cur - 1); }},
+    el("i", { class: "ri-arrow-left-s-line" }));
+  const next = el("button", { class: "carousel-arrow right", onclick: (e) => { e.stopPropagation(); go(cur + 1); }},
+    el("i", { class: "ri-arrow-right-s-line" }));
+  const wrap = el("div", { class: "post-media carousel" }, ...slides, prev, next, dotsWrap);
+  return wrap;
+};
+
+const renderPost = (p, author, opts = {}) => {
   const iOrbited = (p.orbits || []).includes(state.uid);
   const isMine = p.authorUid === state.uid;
   const trending = (p.orbitCount || 0) >= 3;
+  const { hideComments = false } = opts;
 
   const post = el("article", { class: `post${trending ? " is-trending" : ""}` });
 
   const head = el("div", { class: "post-head" },
-    el("img", { class: "avatar md", src: avatarFor(author), onclick: () => location.hash = `#profile/${author?.uid}` }),
-    el("div", { class: "meta" },
+    el("img", { class: "avatar md", src: avatarFor(author), onclick: (e) => { e.stopPropagation(); location.hash = `#profile/${author?.uid}`; } }),
+    el("div", { class: "meta", style: "cursor:pointer;", onclick: () => location.hash = `#post/${p.id}` },
       el("div", { class: "name" },
         author?.name || "User",
         author?.verified ? el("span", { class: "verified", title: "Location verified", html: '<i class="ri-check-line"></i>' }) : null,
@@ -473,7 +539,8 @@ const renderPost = (p, author) => {
         fmtTime(p.createdAt),
       )
     ),
-    isMine ? el("button", { class: "icon-btn more", onclick: async () => {
+    isMine ? el("button", { class: "icon-btn more", onclick: async (e) => {
+      e.stopPropagation();
       if (confirm("Delete this post?")) {
         await deleteDoc(doc(db, "posts", p.id));
         toast("Post deleted");
@@ -483,45 +550,166 @@ const renderPost = (p, author) => {
   post.appendChild(head);
 
   if (p.text) {
-    const body = el("div", { class: "post-text" });
+    const body = el("div", { class: "post-text", onclick: () => location.hash = `#post/${p.id}` });
     body.innerHTML = linkify(p.text);
     post.appendChild(body);
   }
-  if (p.media?.url) {
-    const m = el("div", { class: "post-media" }, el("img", { src: p.media.url, loading: "lazy" }));
-    post.appendChild(m);
-  }
 
-  // Actions
+  // Media (single or carousel)
+  const carousel = renderMediaCarousel(p.media);
+  if (carousel) post.appendChild(carousel);
+
+  // Actions row
+  const orbitIcon = el("i", { class: iOrbited ? "ri-fire-fill" : "ri-fire-line" });
+  const orbitCount = el("span", { text: String(p.orbitCount || 0) });
+  let _iOrbited = iOrbited;
+  const orbitBtn = el("button", { class: `post-act orbit${iOrbited ? " active" : ""}`, onclick: async (e) => {
+    e.stopPropagation();
+    _iOrbited = !_iOrbited;
+    orbitIcon.className = _iOrbited ? "ri-fire-fill" : "ri-fire-line";
+    orbitCount.textContent = String((p.orbitCount || 0) + (_iOrbited ? 1 : -1));
+    orbitBtn.classList.toggle("active", _iOrbited);
+    await updateDoc(doc(db, "posts", p.id), {
+      orbits: _iOrbited ? arrayUnion(state.uid) : arrayRemove(state.uid),
+      orbitCount: increment(_iOrbited ? 1 : -1),
+    }).catch(() => {});
+  }}, orbitIcon, el("span", {}, "Orbit · "), orbitCount);
+
+  const saveIcon = (state.me?.saved || []).includes(p.id) ? "ri-bookmark-fill" : "ri-bookmark-line";
+
   const actions = el("div", { class: "post-actions" },
-    el("button", { class: "post-act", onclick: () => focusComment(p.id) },
+    el("button", { class: "post-act", onclick: (e) => { e.stopPropagation(); location.hash = `#post/${p.id}`; }},
       el("i", { class: "ri-chat-1-line" }),
       String(p.commentCount || 0),
     ),
-    el("button", { class: "post-act", onclick: async () => {
-      const url = `${location.origin}${location.pathname}#feed`;
+    el("button", { class: "post-act", onclick: async (e) => {
+      e.stopPropagation();
+      const url = `${location.origin}${location.pathname}#post/${p.id}`;
       try { await navigator.share?.({ title: "Orbit", text: p.text || "Check this out", url }); }
       catch { await navigator.clipboard.writeText(url); toast("Link copied"); }
     }},
       el("i", { class: "ri-share-forward-line" }),
       "Share",
     ),
-    el("button", { class: "post-act", onclick: () => toggleSave(p.id) },
-      el("i", { class: (state.me?.saved || []).includes(p.id) ? "ri-bookmark-fill" : "ri-bookmark-line" }),
+    el("button", { class: "post-act", onclick: (e) => { e.stopPropagation(); toggleSave(p.id); } },
+      el("i", { class: saveIcon }),
     ),
-    // The special "Orbit" reaction — separates posts in the feed
-    el("button", { class: `post-act orbit${iOrbited ? " active" : ""}`, onclick: () => toggleOrbit(p) },
-      el("i", { class: iOrbited ? "ri-fire-fill" : "ri-fire-line" }),
-      "Orbit · ", String(p.orbitCount || 0),
-    ),
+    orbitBtn,
   );
   post.appendChild(actions);
 
-  // Comments preview (top 2)
-  const cBox = el("div", { class: "comments hidden" });
-  post.appendChild(cBox);
+  if (!hideComments) {
+    // Comments preview (top 2)
+    const cBox = el("div", { class: "comments hidden" });
+    post.appendChild(cBox);
 
-  const cForm = el("form", { class: "comment-form" },
+    const cForm = el("form", { class: "comment-form" },
+      el("img", { class: "avatar xs", src: avatarFor(state.me) }),
+      el("input", { type: "text", placeholder: "Write a comment…" }),
+      el("button", { class: "icon-btn", type: "submit" }, el("i", { class: "ri-send-plane-fill" })),
+    );
+    cForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = cForm.querySelector("input");
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      await addDoc(collection(db, "posts", p.id, "comments"), {
+        text, authorUid: state.uid, createdAt: serverTimestamp(),
+      });
+      await updateDoc(doc(db, "posts", p.id), { commentCount: increment(1) });
+    });
+    post.appendChild(cForm);
+
+    onSnapshot(query(collection(db, "posts", p.id, "comments"), orderBy("createdAt", "desc"), limit(3)),
+      async (snap) => {
+        cBox.innerHTML = "";
+        if (snap.empty) { cBox.classList.add("hidden"); return; }
+        cBox.classList.remove("hidden");
+        const comments = snap.docs.map((d) => ({ id: d.id, ...d.data() })).reverse();
+        const authors = await Promise.all([...new Set(comments.map((c) => c.authorUid))].map(fetchUser));
+        const map = Object.fromEntries(authors.filter(Boolean).map((u) => [u.uid, u]));
+        comments.forEach((c) => {
+          const a = map[c.authorUid];
+          cBox.appendChild(el("div", { class: "comment" },
+            el("img", { class: "avatar xs", src: avatarFor(a) }),
+            el("div", { class: "body" },
+              el("div", { class: "name" }, a?.name || "User",
+                a?.verified ? el("span", { class: "verified", html: '<i class="ri-check-line"></i>' }) : null),
+              el("div", { class: "text", text: c.text }),
+            ),
+          ));
+        });
+      });
+
+    post._focusComment = () => cForm.querySelector("input").focus();
+  }
+  return post;
+};
+
+// =========================================================================
+// 8b. POST DETAIL — full single post with all comments + back button
+// =========================================================================
+const renderPostDetail = async (root, postId) => {
+  if (!postId) { location.hash = "#feed"; return; }
+
+  const back = el("div", { class: "detail-topbar" },
+    el("button", { class: "icon-btn", onclick: () => history.back() },
+      el("i", { class: "ri-arrow-left-line" }), "Back"),
+    el("span", { class: "detail-title" }, "Post"),
+  );
+  root.appendChild(back);
+
+  const snap = await getDoc(doc(db, "posts", postId)).catch(() => null);
+  if (!snap || !snap.exists()) {
+    root.appendChild(el("div", { class: "empty" },
+      el("i", { class: "ri-ghost-line" }),
+      el("div", { class: "t" }, "Post not found"),
+    ));
+    return;
+  }
+  const p = { id: snap.id, ...snap.data() };
+  const author = await fetchUser(p.authorUid);
+
+  // Render the post card (no inline comment form — we show all comments below)
+  root.appendChild(renderPost(p, author, { hideComments: true }));
+
+  // Full comments section
+  const cmtSection = el("div", { class: "detail-comments" });
+  root.appendChild(cmtSection);
+
+  const cmtHead = el("div", { class: "detail-cmt-head" }, "Comments");
+  cmtSection.appendChild(cmtHead);
+
+  const cList = el("div", { class: "detail-cmt-list" });
+  cmtSection.appendChild(cList);
+
+  onSnapshot(query(collection(db, "posts", p.id, "comments"), orderBy("createdAt", "asc"), limit(100)),
+    async (snap) => {
+      cList.innerHTML = "";
+      if (snap.empty) {
+        cList.appendChild(el("div", { class: "reel-cmt-empty" }, "No comments yet. Be the first!"));
+        return;
+      }
+      const comments = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const auths = await Promise.all([...new Set(comments.map((c) => c.authorUid))].map(fetchUser));
+      const map = Object.fromEntries(auths.filter(Boolean).map((u) => [u.uid, u]));
+      comments.forEach((c) => {
+        const a = map[c.authorUid];
+        cList.appendChild(el("div", { class: "comment detail-cmt" },
+          el("img", { class: "avatar xs", src: avatarFor(a), onclick: () => location.hash = `#profile/${a?.uid}` }),
+          el("div", { class: "body" },
+            el("div", { class: "name" }, a?.name || "User",
+              a?.verified ? el("span", { class: "verified", html: '<i class="ri-check-line"></i>' }) : null,
+              el("span", { class: "cmt-time" }, fmtTime(c.createdAt)),
+            ),
+            el("div", { class: "text", text: c.text }),
+          ),
+        ));
+      });
+    });
+
+  const cForm = el("form", { class: "comment-form detail-cmt-form" },
     el("img", { class: "avatar xs", src: avatarFor(state.me) }),
     el("input", { type: "text", placeholder: "Write a comment…" }),
     el("button", { class: "icon-btn", type: "submit" }, el("i", { class: "ri-send-plane-fill" })),
@@ -537,46 +725,7 @@ const renderPost = (p, author) => {
     });
     await updateDoc(doc(db, "posts", p.id), { commentCount: increment(1) });
   });
-  post.appendChild(cForm);
-
-  // Live comments
-  onSnapshot(query(collection(db, "posts", p.id, "comments"), orderBy("createdAt", "desc"), limit(20)),
-    async (snap) => {
-      cBox.innerHTML = "";
-      if (snap.empty) { cBox.classList.add("hidden"); return; }
-      cBox.classList.remove("hidden");
-      const comments = snap.docs.map((d) => ({ id: d.id, ...d.data() })).reverse();
-      const authors = await Promise.all([...new Set(comments.map((c) => c.authorUid))].map(fetchUser));
-      const map = Object.fromEntries(authors.filter(Boolean).map((u) => [u.uid, u]));
-      comments.forEach((c) => {
-        const a = map[c.authorUid];
-        cBox.appendChild(el("div", { class: "comment" },
-          el("img", { class: "avatar xs", src: avatarFor(a) }),
-          el("div", { class: "body" },
-            el("div", { class: "name" }, a?.name || "User",
-              a?.verified ? el("span", { class: "verified", html: '<i class="ri-check-line"></i>' }) : null),
-            el("div", { class: "text", text: c.text }),
-          ),
-        ));
-      });
-    });
-
-  post._focusComment = () => cForm.querySelector("input").focus();
-  return post;
-};
-
-const focusComment = (postId) => {
-  const node = $$(`.post`).find((n) => n._postId === postId);
-  node?._focusComment?.();
-};
-
-const toggleOrbit = async (p) => {
-  const ref = doc(db, "posts", p.id);
-  const has = (p.orbits || []).includes(state.uid);
-  await updateDoc(ref, {
-    orbits: has ? arrayRemove(state.uid) : arrayUnion(state.uid),
-    orbitCount: increment(has ? -1 : 1),
-  });
+  cmtSection.appendChild(cForm);
 };
 
 const toggleSave = async (postId) => {
@@ -863,27 +1012,47 @@ const renderGroups = (root) => {
 // =========================================================================
 // 11. EXPLORE / SAVED
 // =========================================================================
-const renderExplore = (root) => {
-  const head = el("div", { class: "section-head" }, el("h2", {}, "Explore"));
+const renderExplore = (root, hashtagFilter = null) => {
+  const title = hashtagFilter ? `#${hashtagFilter}` : "Explore";
+  const head = el("div", { class: "section-head" },
+    hashtagFilter
+      ? el("button", { class: "icon-btn", style: "margin-right:8px;", onclick: () => history.back() },
+          el("i", { class: "ri-arrow-left-line" }))
+      : null,
+    el("h2", {}, title),
+  );
   root.appendChild(head);
   const grid = el("div", { class: "grid-3" });
   root.appendChild(grid);
 
-  onSnapshot(query(collection(db, "posts"), orderBy("orbitCount", "desc"), limit(60)), (snap) => {
+  const baseQ = hashtagFilter
+    ? query(collection(db, "posts"), where("hashtags", "array-contains", hashtagFilter.toLowerCase()), orderBy("createdAt", "desc"), limit(60))
+    : query(collection(db, "posts"), orderBy("orbitCount", "desc"), limit(60));
+
+  onSnapshot(baseQ, (snap) => {
     grid.innerHTML = "";
     if (snap.empty) {
       grid.appendChild(el("div", { class: "empty", style: "grid-column:1/-1;" },
-        el("i", { class: "ri-compass-3-line" }), el("div", { class: "t" }, "Nothing to explore yet")));
+        el("i", { class: hashtagFilter ? "ri-hashtag" : "ri-compass-3-line" }),
+        el("div", { class: "t" }, hashtagFilter ? `No posts tagged #${hashtagFilter}` : "Nothing to explore yet")));
       return;
     }
     snap.docs.forEach((d) => {
-      const p = d.data();
-      const cell = el("div", { class: "cell", onclick: () => location.hash = "#feed" });
-      if (p.media?.url) cell.appendChild(el("img", { src: p.media.url, loading: "lazy" }));
-      else cell.appendChild(el("div", {
-        style: "padding:12px;font-size:13px;color:var(--text-dim);width:100%;height:100%;display:grid;place-items:center;text-align:center;",
-        text: (p.text || "").slice(0, 80),
-      }));
+      const p = { id: d.id, ...d.data() };
+      const cell = el("div", { class: "cell", onclick: () => location.hash = `#post/${p.id}` });
+      const mediaItems = Array.isArray(p.media) ? p.media : (p.media ? [p.media] : []);
+      if (mediaItems.length) {
+        const m = mediaItems[0];
+        if (m.type === "video") {
+          cell.appendChild(el("video", { src: m.url, muted: "", playsinline: "", preload: "metadata" }));
+          cell.appendChild(el("span", { class: "cell-badge" }, el("i", { class: "ri-play-fill" })));
+        } else {
+          cell.appendChild(el("img", { src: m.url, loading: "lazy" }));
+          if (mediaItems.length > 1) cell.appendChild(el("span", { class: "cell-badge" }, el("i", { class: "ri-image-2-line" })));
+        }
+      } else {
+        cell.appendChild(el("div", { class: "cell-text", text: (p.text || "").slice(0, 80) }));
+      }
       grid.appendChild(cell);
     });
   });
@@ -971,25 +1140,40 @@ const renderProfile = async (root, uid) => {
   const renderTab = async (which) => {
     body.innerHTML = "";
     if (which === "posts") {
-      const grid = el("div", { class: "grid-3" }); body.appendChild(grid);
-      const qs = await getDocs(query(collection(db, "posts"), where("authorUid", "==", uid), orderBy("createdAt", "desc"), limit(60)));
-      if (qs.empty) {
+      const snap = await getDocs(query(collection(db, "posts"), where("authorUid", "==", uid), orderBy("createdAt", "desc"), limit(60)));
+      if (snap.empty) {
         body.appendChild(el("div", { class: "empty" }, el("i", { class: "ri-image-line" }), el("div", { class: "t" }, "No posts yet"))); return;
       }
-      qs.forEach((d) => {
-        const p = d.data();
-        const cell = el("div", { class: "cell" });
-        if (p.media?.url) cell.appendChild(el("img", { src: p.media.url, loading: "lazy" }));
-        else cell.appendChild(el("div", { style: "padding:10px;font-size:13px;", text: (p.text || "").slice(0, 80) }));
+      const grid = el("div", { class: "grid-3" }); body.appendChild(grid);
+      snap.forEach((d) => {
+        const p = { id: d.id, ...d.data() };
+        const cell = el("div", { class: "cell", onclick: () => location.hash = `#post/${p.id}` });
+        // Thumbnail: first media item
+        const mediaItems = Array.isArray(p.media) ? p.media : (p.media ? [p.media] : []);
+        if (mediaItems.length) {
+          const m = mediaItems[0];
+          if (m.type === "video") {
+            cell.appendChild(el("video", { src: m.url, muted: "", playsinline: "", preload: "metadata" }));
+            if (mediaItems.length > 1) cell.appendChild(el("span", { class: "cell-badge" }, el("i", { class: "ri-film-line" })));
+          } else {
+            cell.appendChild(el("img", { src: m.url, loading: "lazy" }));
+            if (mediaItems.length > 1) cell.appendChild(el("span", { class: "cell-badge" }, el("i", { class: "ri-image-2-line" })));
+          }
+        } else {
+          cell.appendChild(el("div", { class: "cell-text", text: (p.text || "").slice(0, 80) }));
+        }
         grid.appendChild(cell);
       });
     } else if (which === "reels") {
+      const snap = await getDocs(query(collection(db, "reels"), where("authorUid", "==", uid), orderBy("createdAt", "desc"), limit(30)));
+      if (snap.empty) { body.appendChild(el("div", { class: "empty" }, el("i", { class: "ri-film-line" }), el("div", { class: "t" }, "No reels yet"))); return; }
       const grid = el("div", { class: "grid-3" }); body.appendChild(grid);
-      const qs = await getDocs(query(collection(db, "reels"), where("authorUid", "==", uid), orderBy("createdAt", "desc"), limit(30)));
-      if (qs.empty) { body.appendChild(el("div", { class: "empty" }, el("i", { class: "ri-film-line" }), el("div", { class: "t" }, "No reels yet"))); return; }
-      qs.forEach((d) => {
-        const r = d.data();
-        const cell = el("div", { class: "cell" }, el("video", { src: r.media.url, muted: "true", playsinline: "" }));
+      snap.forEach((d) => {
+        const r = { id: d.id, ...d.data() };
+        const cell = el("div", { class: "cell", onclick: () => location.hash = `#reels` },
+          el("video", { src: r.media?.url, muted: "", playsinline: "", preload: "metadata" }),
+          el("span", { class: "cell-badge" }, el("i", { class: "ri-play-fill" })),
+        );
         grid.appendChild(cell);
       });
     } else {
@@ -1016,6 +1200,17 @@ const editProfile = async () => {
   await updateDoc(doc(db, "users", state.uid), { name, bio });
   toast("Profile updated");
   router();
+};
+
+const renderProfileByUsername = async (root, username) => {
+  if (!username) { location.hash = "#feed"; return; }
+  const qs = await getDocs(query(collection(db, "users"), where("username", "==", username.toLowerCase()), limit(1)));
+  if (qs.empty) {
+    root.appendChild(el("div", { class: "empty" }, el("i", { class: "ri-user-unfollow-line" }), el("div", { class: "t" }, `@${username} not found`)));
+    return;
+  }
+  const u = { uid: qs.docs[0].id, ...qs.docs[0].data() };
+  renderProfile(root, u.uid);
 };
 
 // =========================================================================
@@ -1141,39 +1336,76 @@ document.addEventListener("click", (e) => {
   }
 });
 
-// Post media preview
-let postFile = null;
-$("#postPickMedia").addEventListener("click", () => $("#postMedia").click());
-$("#postMedia").addEventListener("change", (e) => {
-  postFile = e.target.files[0] || null;
+// Post media — up to 3 files (images or one video)
+let postFiles = [];
+const MAX_POST_FILES = 3;
+
+const refreshPostPreviews = () => {
   const prev = $("#postPreview");
+  if (!prev) return;
   prev.innerHTML = "";
-  if (postFile) {
-    const url = URL.createObjectURL(postFile);
-    prev.appendChild(el("img", { src: url }));
+  postFiles.forEach((file, i) => {
+    const url = URL.createObjectURL(file);
+    const isVid = file.type.startsWith("video/");
+    const wrap = el("div", { class: "post-preview-thumb" },
+      isVid
+        ? el("video", { src: url, muted: "", playsinline: "", style: "width:100%;height:100%;object-fit:cover;" })
+        : el("img", { src: url }),
+      el("button", { class: "thumb-remove", onclick: () => {
+        postFiles.splice(i, 1);
+        refreshPostPreviews();
+      }}, el("i", { class: "ri-close-circle-fill" })),
+    );
+    prev.appendChild(wrap);
+  });
+  const countEl = $("#postFileCount");
+  if (countEl) countEl.textContent = postFiles.length ? `${postFiles.length}/${MAX_POST_FILES} file${postFiles.length > 1 ? "s" : ""}` : "";
+};
+
+$("#postPickMedia").addEventListener("click", () => {
+  if (postFiles.length >= MAX_POST_FILES) { toast(`Max ${MAX_POST_FILES} files per post`); return; }
+  $("#postMedia").click();
+});
+$("#postMedia").addEventListener("change", (e) => {
+  const files = Array.from(e.target.files || []);
+  for (const file of files) {
+    if (postFiles.length >= MAX_POST_FILES) break;
+    // Only allow 1 video
+    if (file.type.startsWith("video/") && postFiles.some((f) => f.type.startsWith("video/"))) {
+      toast("Only one video per post"); continue;
+    }
+    postFiles.push(file);
   }
+  e.target.value = "";
+  refreshPostPreviews();
 });
 
 $("#postForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const textEl = e.target.querySelector("textarea[name='text']");
   const text = (textEl?.value || "").trim();
-  if (!text && !postFile) { toast("Write something or pick an image first"); return; }
+  if (!text && !postFiles.length) { toast("Write something or pick a file first"); return; }
   const btn = e.target.querySelector("button[type='submit']");
   btn.disabled = true; btn.textContent = "Posting…";
   try {
     let media = null;
-    if (postFile) {
-      toast("Uploading image…");
-      media = await uploadToCloudinary(postFile, "image");
+    if (postFiles.length === 1) {
+      toast("Uploading…");
+      media = await uploadToCloudinary(postFiles[0], postFiles[0].type.startsWith("video/") ? "video" : "image");
+    } else if (postFiles.length > 1) {
+      toast("Uploading files…");
+      media = await Promise.all(postFiles.map((f) =>
+        uploadToCloudinary(f, f.type.startsWith("video/") ? "video" : "image")));
     }
+    const hashtags = extractHashtags(text);
     await addDoc(collection(db, "posts"), {
       authorUid: state.uid, text, media,
+      hashtags,
       orbits: [], orbitCount: 0, commentCount: 0,
       createdAt: serverTimestamp(),
     });
     e.target.reset();
-    postFile = null; $("#postPreview").innerHTML = "";
+    postFiles = []; refreshPostPreviews();
     composeModal.classList.add("hidden");
     toast("Posted!");
   } catch (err) {
