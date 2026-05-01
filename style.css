@@ -266,6 +266,18 @@ textarea { resize: vertical; min-height: 80px; }
   overflow-y: auto; overflow-x: hidden;
   scroll-behavior: smooth;
   padding-bottom: 80px;
+  /* Must be a positioned block so chat-active height can fill it */
+  min-height: 0;
+}
+
+/* Locked when chats route is active — inner grid takes over scrolling */
+.content.chat-active {
+  overflow: hidden;
+  padding: 0 !important;
+  /* Fill the full grid cell so chats-route grid rows work correctly */
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 .rightrail {
   border-left: 1px solid var(--line); padding: 16px; overflow-y: auto;
@@ -794,6 +806,11 @@ input[type="range"] { width: 100%; accent-color: var(--primary); }
   .topbar-search { display: none; }
   .content { padding-bottom: calc(var(--bottomnav-h) + 16px); }
   .brand-name { font-size: 18px; }
+
+  /* When a chat is open on mobile: hide the global topbar entirely.
+     The chat's own .chat-head provides navigation + context. */
+  .app:has(.content.chat-active) { grid-template-rows: 0px 1fr; }
+  .app:has(.content.chat-active) .topbar { display: none; }
 
   /* Mobile sidebar — slides in as overlay */
   .sidebar.is-open {

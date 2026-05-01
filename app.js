@@ -1025,8 +1025,9 @@ const renderExplore = (root, hashtagFilter = null) => {
   const grid = el("div", { class: "grid-3" });
   root.appendChild(grid);
 
+  // No compound orderBy on hashtag queries — sort client-side to avoid composite index
   const baseQ = hashtagFilter
-    ? query(collection(db, "posts"), where("hashtags", "array-contains", hashtagFilter.toLowerCase()), orderBy("createdAt", "desc"), limit(60))
+    ? query(collection(db, "posts"), where("hashtags", "array-contains", hashtagFilter.toLowerCase()), limit(60))
     : query(collection(db, "posts"), orderBy("orbitCount", "desc"), limit(60));
 
   onSnapshot(baseQ, (snap) => {
@@ -1037,7 +1038,12 @@ const renderExplore = (root, hashtagFilter = null) => {
         el("div", { class: "t" }, hashtagFilter ? `No posts tagged #${hashtagFilter}` : "Nothing to explore yet")));
       return;
     }
-    snap.docs.forEach((d) => {
+    // Client-side sort for hashtag queries (no compound index needed)
+    const docs = [...snap.docs].sort((a, b) => {
+      if (hashtagFilter) return (b.data().createdAt?.seconds || 0) - (a.data().createdAt?.seconds || 0);
+      return (b.data().orbitCount || 0) - (a.data().orbitCount || 0);
+    });
+    docs.forEach((d) => {
       const p = { id: d.id, ...d.data() };
       const cell = el("div", { class: "cell", onclick: () => location.hash = `#post/${p.id}` });
       const mediaItems = Array.isArray(p.media) ? p.media : (p.media ? [p.media] : []);
@@ -1139,16 +1145,27 @@ const renderProfile = async (root, uid) => {
 
   const renderTab = async (which) => {
     body.innerHTML = "";
+    // Show loading state
+    body.appendChild(el("div", { class: "empty" },
+      el("i", { class: "ri-loader-4-line", style: "animation:spin 1s linear infinite;" }),
+      el("div", { class: "t" }, "Loading…")));
+
     if (which === "posts") {
-      const snap = await getDocs(query(collection(db, "posts"), where("authorUid", "==", uid), orderBy("createdAt", "desc"), limit(60)));
-      if (snap.empty) {
+      // No orderBy — avoid composite index requirement; sort client-side
+      const snap = await getDocs(
+        query(collection(db, "posts"), where("authorUid", "==", uid), limit(60))
+      ).catch(() => null);
+      body.innerHTML = "";
+      if (!snap || snap.empty) {
         body.appendChild(el("div", { class: "empty" }, el("i", { class: "ri-image-line" }), el("div", { class: "t" }, "No posts yet"))); return;
       }
+      const posts = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+
       const grid = el("div", { class: "grid-3" }); body.appendChild(grid);
-      snap.forEach((d) => {
-        const p = { id: d.id, ...d.data() };
+      posts.forEach((p) => {
         const cell = el("div", { class: "cell", onclick: () => location.hash = `#post/${p.id}` });
-        // Thumbnail: first media item
         const mediaItems = Array.isArray(p.media) ? p.media : (p.media ? [p.media] : []);
         if (mediaItems.length) {
           const m = mediaItems[0];
@@ -1165,11 +1182,20 @@ const renderProfile = async (root, uid) => {
         grid.appendChild(cell);
       });
     } else if (which === "reels") {
-      const snap = await getDocs(query(collection(db, "reels"), where("authorUid", "==", uid), orderBy("createdAt", "desc"), limit(30)));
-      if (snap.empty) { body.appendChild(el("div", { class: "empty" }, el("i", { class: "ri-film-line" }), el("div", { class: "t" }, "No reels yet"))); return; }
+      // No orderBy — avoid composite index requirement; sort client-side
+      const snap = await getDocs(
+        query(collection(db, "reels"), where("authorUid", "==", uid), limit(30))
+      ).catch(() => null);
+      body.innerHTML = "";
+      if (!snap || snap.empty) {
+        body.appendChild(el("div", { class: "empty" }, el("i", { class: "ri-film-line" }), el("div", { class: "t" }, "No reels yet"))); return;
+      }
+      const reels = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+
       const grid = el("div", { class: "grid-3" }); body.appendChild(grid);
-      snap.forEach((d) => {
-        const r = { id: d.id, ...d.data() };
+      reels.forEach((r) => {
         const cell = el("div", { class: "cell", onclick: () => location.hash = `#reels` },
           el("video", { src: r.media?.url, muted: "", playsinline: "", preload: "metadata" }),
           el("span", { class: "cell-badge" }, el("i", { class: "ri-play-fill" })),

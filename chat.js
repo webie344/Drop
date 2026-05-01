@@ -55,6 +55,16 @@ document.addEventListener("orbit:open-chats", (e) => openChats(e.detail?.peerUid
 const openChats = (target) => {
   const content = $("#content");
   content.innerHTML = "";
+
+  // Lock the content container so the chat grid owns all scrolling
+  content.classList.add("chat-active");
+
+  // Clean up when user navigates away
+  const removeActive = () => {
+    content.classList.remove("chat-active");
+  };
+  window.addEventListener("hashchange", removeActive, { once: true });
+
   const route = el("div", { class: "chats-route", id: "chatsRoute" });
   content.appendChild(route);
 
