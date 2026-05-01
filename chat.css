@@ -8,9 +8,8 @@
 .chats-route {
   display: grid;
   grid-template-columns: 340px 1fr;
-  /* flex:1 fills the .content.chat-active flex column; min-height:0 lets grid children shrink */
-  flex: 1;
-  min-height: 0;
+  /* Size directly off the viewport — no parent-height chain needed */
+  height: calc(100dvh - var(--topbar-h));
   overflow: hidden;
 }
 .chats-list {
@@ -115,6 +114,10 @@ html[data-theme="light"] .chat-view { --chat-veil: rgba(255, 255, 255, 0.55); }
   .chats-route.is-open .chats-list { display: none; }
   .chats-route:not(.is-open) .chat-view { display: none; }
   .chat-head .back { display: inline-flex; }
+}
+/* On mobile (≤640px) the topbar is hidden so chats fill full viewport */
+@media (max-width: 640px) {
+  .chats-route { height: 100dvh; }
 }
 
 /* ---------- Messages list ---------- */
