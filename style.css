@@ -871,3 +871,365 @@ input[type="range"] { width: 100%; accent-color: var(--primary); }
   display: grid; place-items: center;
 }
 
+
+/* =========================================================================
+   ORBIT FIXES — Explore, Profile tabs, Avatar upload, Edit modal
+   ========================================================================= */
+
+/* ── Explore: 2-col larger cards with text overlay ──────────────────── */
+.explore-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  padding: 0 16px 80px;
+}
+@media (min-width: 520px) {
+  .explore-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+.explore-cell {
+  position: relative;
+  border-radius: var(--radius);
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  background: var(--card);
+  cursor: pointer;
+  transition: transform .15s, box-shadow .15s;
+}
+.explore-cell:hover { transform: scale(1.02); box-shadow: 0 6px 24px rgba(0,0,0,.3); }
+.explore-cell img,
+.explore-cell video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Gradient + caption text overlay on images */
+.explore-cell-overlay {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 24px 10px 10px;
+  background: linear-gradient(to top, rgba(0,0,0,.65) 0%, transparent 100%);
+  pointer-events: none;
+}
+.explore-cell-caption {
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Orbit count badge bottom-right */
+.explore-orbit-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(0,0,0,.55);
+  color: var(--grad-2, #ff7b54);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 20px;
+  pointer-events: none;
+}
+
+/* Text-only post card */
+.explore-cell-text-only {
+  aspect-ratio: 4 / 3;
+}
+.explore-text-card {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-main);
+  background: var(--card);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Profile reels: 2-col portrait grid ─────────────────────────────── */
+.profile-reels-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  padding: 12px 0 80px;
+}
+@media (min-width: 420px) {
+  .profile-reels-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+.profile-reel-cell {
+  position: relative;
+  border-radius: var(--radius);
+  overflow: hidden;
+  aspect-ratio: 9 / 16;
+  background: #000;
+  cursor: pointer;
+  transition: transform .15s;
+}
+.profile-reel-cell:hover { transform: scale(1.02); }
+.profile-reel-cell video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.profile-reel-cell .cell-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+.reel-cell-caption {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 20px 8px 8px;
+  background: linear-gradient(to top, rgba(0,0,0,.65) 0%, transparent 100%);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.4;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+/* ── Avatar upload wrap (profile head) ──────────────────────────────── */
+.avatar-upload-wrap {
+  position: relative;
+  display: inline-block;
+  cursor: pointer;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.profile-avatar-wrap {
+  align-self: flex-start;
+}
+.avatar-upload-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(0,0,0,.45);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity .2s;
+  color: #fff;
+  font-size: 11px;
+  gap: 2px;
+  pointer-events: none;
+}
+.avatar-upload-wrap:hover .avatar-upload-overlay {
+  opacity: 1;
+}
+.avatar-upload-overlay i {
+  font-size: 20px;
+}
+
+/* ── Profile Edit Modal ──────────────────────────────────────────────── */
+#profileEditModal {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0,0,0,.6);
+  backdrop-filter: blur(4px);
+}
+#profileEditModal.hidden { display: none; }
+
+.profile-edit-sheet {
+  background: var(--card);
+  border-radius: var(--radius-lg, 20px);
+  width: 100%;
+  max-width: 420px;
+  padding: 24px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 12px 48px rgba(0,0,0,.4);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.pem-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.pem-head h3 {
+  margin: 0;
+  font-size: 18px;
+  font-family: var(--font-display);
+}
+
+.pem-avatar-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.pem-avatar-wrap {
+  position: relative;
+  display: inline-block;
+  cursor: pointer;
+  border-radius: 50%;
+}
+.pem-avatar-wrap:hover .avatar-upload-overlay { opacity: 1; }
+#editAvatar {
+  display: block;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid var(--border);
+}
+.pem-avatar-hint {
+  font-size: 12px;
+  color: var(--text-mute);
+}
+
+.pem-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pem-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pem-field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+.pem-field input,
+.pem-field textarea {
+  background: var(--input-bg, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--text-main);
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: inherit;
+  transition: border-color .15s;
+}
+.pem-field input:focus,
+.pem-field textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.pem-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+/* Notification panel styles */
+.notif-panel {
+  position: fixed;
+  top: 60px;
+  right: 16px;
+  z-index: 8000;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 18px);
+  width: min(360px, calc(100vw - 32px));
+  max-height: 480px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 8px 40px rgba(0,0,0,.35);
+  animation: slideDown .2s ease;
+}
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.np-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  font-weight: 700;
+  font-size: 15px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#notifList {
+  overflow-y: auto;
+  flex: 1;
+}
+.notif-empty {
+  padding: 28px 20px;
+  text-align: center;
+  color: var(--text-mute);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.notif-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background .15s;
+  border-bottom: 1px solid var(--border);
+}
+.notif-item:last-child { border-bottom: none; }
+.notif-item:hover { background: var(--hover, rgba(255,255,255,.05)); }
+.ni-text {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-main);
+}
+.ni-time {
+  font-size: 11px;
+  color: var(--text-mute);
+  margin-top: 2px;
+}
+
+/* Notification pill on bell */
+#notifPill {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: var(--danger, #ef4444);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 99px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  pointer-events: none;
+  line-height: 1;
+}
