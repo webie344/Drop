@@ -805,9 +805,9 @@ input[type="range"] { width: 100%; accent-color: var(--primary); }
 
   /* When a chat is open on mobile: hide the global topbar entirely.
      The chat's own .chat-head provides navigation + context. */
-  .app:has(.content.chat-active) { grid-template-rows: 0px 1fr; }
+  .app:has(.content.chat-active) { grid-template-rows:  2fr; }
   .app:has(.content.chat-active) .topbar { display: none; }
-
+  .app:has(.content.chat-active) .only-mobile { display: none; }
   /* Mobile sidebar — slides in as overlay */
   .sidebar.is-open {
     display: flex !important;
