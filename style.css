@@ -274,8 +274,9 @@ textarea { resize: vertical; min-height: 80px; }
 .content.chat-active {
   overflow: hidden;
   padding: 0 !important;
-  /* Fill the full grid cell so chats-route grid rows work correctly */
-  height: 100%;
+  /* Explicit viewport height avoids % resolving to 0 (parent has no height set) */
+  height: calc(100dvh - var(--topbar-h));
+  max-height: calc(100dvh - var(--topbar-h));
   display: flex;
   flex-direction: column;
 }
@@ -811,6 +812,11 @@ input[type="range"] { width: 100%; accent-color: var(--primary); }
      The chat's own .chat-head provides navigation + context. */
   .app:has(.content.chat-active) { grid-template-rows: 0px 1fr; }
   .app:has(.content.chat-active) .topbar { display: none; }
+  /* Override height to use full dvh since topbar is gone */
+  .content.chat-active {
+    height: 100dvh;
+    max-height: 100dvh;
+  }
 
   /* Mobile sidebar — slides in as overlay */
   .sidebar.is-open {

@@ -8,9 +8,8 @@
 .chats-route {
   display: grid;
   grid-template-columns: 340px 1fr;
-  /* Take whatever the parent gives — content.chat-active is flex column */
+  /* flex:1 fills the .content.chat-active flex column; min-height:0 lets grid children shrink */
   flex: 1;
-  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -18,7 +17,7 @@
   border-right: 1px solid var(--line);
   display: flex; flex-direction: column;
   min-width: 0;
-  height: 100%; overflow: hidden;
+  overflow: hidden;
 }
 .chats-list .head {
   padding: 14px 16px; border-bottom: 1px solid var(--line);
