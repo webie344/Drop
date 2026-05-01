@@ -280,6 +280,47 @@ $("#signOutBtn").addEventListener("click", async () => {
 $("#themeToggle").addEventListener("click", toggleTheme);
 $("#themeAuthToggle")?.addEventListener("click", toggleTheme);
 
+// ── Notification bell ──────────────────────────────────────────
+const toggleNotifPanel = () => {
+  const existing = $("#notifPanel");
+  if (existing) { existing.remove(); return; }
+  const panel = el("div", { class: "notif-panel", id: "notifPanel" });
+  const head = el("div", { class: "np-head" },
+    el("span", { text: "Notifications" }),
+    el("button", { class: "icon-btn", style: "width:30px;height:30px;", onclick: () => panel.remove() },
+      el("i", { class: "ri-close-line" })),
+  );
+  panel.appendChild(head);
+  // Load recent: orbits on my posts + follows
+  const q1 = query(collection(db, "posts"), where("authorUid", "==", state.uid), orderBy("createdAt", "desc"), limit(10));
+  getDocs(q1).then((snap) => {
+    if (snap.empty) {
+      panel.appendChild(el("div", { class: "notif-empty" }, "Nothing here yet — post something and get Orbited!"));
+      return;
+    }
+    snap.docs.forEach((d) => {
+      const p = d.data();
+      const count = p.orbitCount || 0;
+      if (!count) return;
+      panel.appendChild(el("div", { class: "notif-item", onclick: () => { location.hash = "#feed"; panel.remove(); } },
+        el("i", { class: "ri-fire-fill", style: "color:var(--grad-2);font-size:22px;margin-top:2px;" }),
+        el("div", {},
+          el("div", { class: "ni-text" }, `Your post "${(p.text || "").slice(0, 50) || "[media]"}" has ${count} Orbit${count !== 1 ? "s" : ""}`),
+          el("div", { class: "ni-time" }, fmtTime(p.createdAt)),
+        ),
+      ));
+    });
+    if (panel.childElementCount === 1) panel.appendChild(el("div", { class: "notif-empty" }, "No new notifications yet."));
+  }).catch(() => panel.appendChild(el("div", { class: "notif-empty" }, "Nothing here yet.")));
+
+  document.body.appendChild(panel);
+  setTimeout(() => document.addEventListener("click", function once(e) {
+    if (!panel.contains(e.target) && e.target !== $("#notifBtn")) panel.remove();
+    else document.addEventListener("click", once, { once: true });
+  }, { once: true }), 50);
+};
+$("#notifBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleNotifPanel(); });
+
 // =========================================================================
 // 7. ROUTER
 // =========================================================================
@@ -312,7 +353,21 @@ $$(".nav-item, .bn, .brand").forEach((b) => {
   b.addEventListener("click", () => { location.hash = "#" + b.dataset.route; });
 });
 $("#meBtn").addEventListener("click", () => { location.hash = "#profile"; });
-$("#openSidebar")?.addEventListener("click", () => { $("#sidebar").classList.toggle("hidden"); });
+// ── Mobile sidebar overlay ──────────────────────────────────────
+const openMobileSidebar = () => {
+  $("#sidebar").classList.add("is-open");
+  $("#sidebarBackdrop").classList.add("visible");
+};
+const closeMobileSidebar = () => {
+  $("#sidebar").classList.remove("is-open");
+  $("#sidebarBackdrop").classList.remove("visible");
+};
+$("#openSidebar")?.addEventListener("click", openMobileSidebar);
+$("#sidebarBackdrop").addEventListener("click", closeMobileSidebar);
+// Close sidebar when a nav item is tapped on mobile
+$$(".nav-item, .sidebar-foot .link").forEach((b) =>
+  b.addEventListener("click", () => { if (window.innerWidth <= 640) closeMobileSidebar(); })
+);
 
 // =========================================================================
 // 8. FEED — flat IG/FB style with separator lines + Trending lane
@@ -951,62 +1006,89 @@ $("#postMedia").addEventListener("change", (e) => {
 
 $("#postForm").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const text = e.target.text.value.trim();
-  if (!text && !postFile) return;
-  let media = null;
-  if (postFile) {
-    toast("Uploading…");
-    media = await uploadToCloudinary(postFile, "image");
+  const textEl = e.target.querySelector("textarea[name='text']");
+  const text = (textEl?.value || "").trim();
+  if (!text && !postFile) { toast("Write something or pick an image first"); return; }
+  const btn = e.target.querySelector("button[type='submit']");
+  btn.disabled = true; btn.textContent = "Posting…";
+  try {
+    let media = null;
+    if (postFile) {
+      toast("Uploading image…");
+      media = await uploadToCloudinary(postFile, "image");
+    }
+    await addDoc(collection(db, "posts"), {
+      authorUid: state.uid, text, media,
+      orbits: [], orbitCount: 0, commentCount: 0,
+      createdAt: serverTimestamp(),
+    });
+    e.target.reset();
+    postFile = null; $("#postPreview").innerHTML = "";
+    composeModal.classList.add("hidden");
+    toast("Posted!");
+  } catch (err) {
+    toast("Failed to post: " + (err.message || "unknown error"));
+  } finally {
+    btn.disabled = false; btn.textContent = "Post";
   }
-  await addDoc(collection(db, "posts"), {
-    authorUid: state.uid, text, media,
-    orbits: [], orbitCount: 0, commentCount: 0,
-    createdAt: serverTimestamp(),
-  });
-  e.target.reset();
-  postFile = null; $("#postPreview").innerHTML = "";
-  composeModal.classList.add("hidden");
-  toast("Posted");
 });
 
 $("#reelForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const file = $("#reelMedia").files[0];
-  if (!file) return;
-  toast("Uploading reel…");
-  const media = await uploadToCloudinary(file, "video");
-  await addDoc(collection(db, "reels"), {
-    authorUid: state.uid, caption: e.target.caption.value.trim(), media,
-    likes: [], likeCount: 0, commentCount: 0,
-    createdAt: serverTimestamp(),
-  });
-  e.target.reset();
-  composeModal.classList.add("hidden");
-  toast("Reel uploaded");
-  location.hash = "#reels";
+  if (!file) { toast("Pick a video first"); return; }
+  const btn = e.target.querySelector("button[type='submit']");
+  btn.disabled = true; btn.textContent = "Uploading…";
+  try {
+    toast("Uploading reel…");
+    const media = await uploadToCloudinary(file, "video");
+    const capEl = e.target.querySelector("input[name='caption']");
+    await addDoc(collection(db, "reels"), {
+      authorUid: state.uid, caption: (capEl?.value || "").trim(), media,
+      likes: [], likeCount: 0, commentCount: 0,
+      createdAt: serverTimestamp(),
+    });
+    e.target.reset();
+    composeModal.classList.add("hidden");
+    toast("Reel uploaded!");
+    location.hash = "#reels";
+  } catch (err) {
+    toast("Upload failed: " + (err.message || "check Cloudinary config"));
+  } finally {
+    btn.disabled = false; btn.textContent = "Upload reel";
+  }
 });
 
 $("#groupForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
-  const ref = await addDoc(collection(db, "groups"), {
-    name: fd.get("name"),
-    about: fd.get("about") || "",
-    isPublic: fd.get("isPublic") === "on",
-    ownerUid: state.uid,
-    admins: [state.uid],
-    members: [state.uid],
-    createdAt: serverTimestamp(),
-  });
-  // Seed first system message in subcollection
-  await addDoc(collection(db, "groups", ref.id, "messages"), {
-    type: "system", text: `${state.me.name} created the group`,
-    createdAt: serverTimestamp(),
-  });
-  e.target.reset();
-  composeModal.classList.add("hidden");
-  toast("Group created");
-  location.hash = `#chats/${ref.id}`;
+  const name = (fd.get("name") || "").trim();
+  if (!name) { toast("Give the group a name"); return; }
+  const btn = e.target.querySelector("button[type='submit']");
+  btn.disabled = true; btn.textContent = "Creating…";
+  try {
+    const ref = await addDoc(collection(db, "groups"), {
+      name,
+      about: fd.get("about") || "",
+      isPublic: fd.get("isPublic") === "on",
+      ownerUid: state.uid,
+      admins: [state.uid],
+      members: [state.uid],
+      createdAt: serverTimestamp(),
+    });
+    await addDoc(collection(db, "groups", ref.id, "messages"), {
+      type: "system", text: `${state.me.name} created the group`,
+      createdAt: serverTimestamp(),
+    });
+    e.target.reset();
+    composeModal.classList.add("hidden");
+    toast("Group created!");
+    location.hash = `#chats/${ref.id}`;
+  } catch (err) {
+    toast("Failed to create group: " + (err.message || "check Firebase config"));
+  } finally {
+    btn.disabled = false; btn.textContent = "Create group";
+  }
 });
 
 // =========================================================================

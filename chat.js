@@ -293,11 +293,11 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
           (peer.online ? "online" : (peer.lastSeen ? `last seen ${fmtTime(peer.lastSeen)}` : ""))),
     ),
     el("div", { class: "right" },
-      el("button", { class: "icon-btn", title: "Search", onclick: () => searchInChat(chatId, isGroup) },
+      el("button", { class: "icon-btn", title: "Search in chat", onclick: () => searchInChat(chatId, isGroup) },
         el("i", { class: "ri-search-line" })),
-      el("button", { class: "icon-btn", title: "Customize", onclick: () => openCustomize(chatId) },
-        el("i", { class: "ri-palette-line" })),
-      el("button", { class: "icon-btn", title: "More", onclick: () => chatHeaderMenu({ isGroup, chatId, peer, group }) },
+      el("button", { class: "btn ghost", style: "padding:6px 12px;font-size:13px;gap:6px;", title: "Customize", onclick: () => openCustomize(chatId) },
+        el("i", { class: "ri-palette-line" }), el("span", { class: "hide-xs" }, "Customize")),
+      el("button", { class: "icon-btn", title: "More options", onclick: () => chatHeaderMenu({ isGroup, chatId, peer, group }) },
         el("i", { class: "ri-more-2-line" })),
     ),
   );
@@ -311,6 +311,10 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
   const replyPreview = el("div", { class: "reply-preview hidden", id: "replyPreview" });
   view.appendChild(replyPreview);
 
+  // ATTACHMENT PREVIEW STRIP (hidden until file picked)
+  const attachPreview = el("div", { class: "attach-preview hidden", id: "attachPreviewStrip" });
+  view.appendChild(attachPreview);
+
   // COMPOSER
   const composer = el("div", { class: "composer" },
     el("button", { class: "ctrl", title: "Emoji", onclick: toggleEmojiPicker },
@@ -319,7 +323,8 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
       "data-placeholder": "Message", spellcheck: "true",
       oninput: () => {
         const f = $("#composerField");
-        $("#sendBtn").disabled = !f.textContent.trim();
+        const hasText = f.textContent.trim().length > 0;
+        $("#sendBtn").disabled = !hasText && !pendingAttachment;
         // typing indicator
         if (!isGroup) {
           updateDoc(doc(db, "chats", chatId), { typing: { [state.uid]: serverTimestamp() } }, { merge: true }).catch(async () => {
@@ -336,8 +341,8 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
       onkeydown: (e) => {
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
       } }),
-    el("button", { class: "ctrl", title: "Attach", onclick: pickAttachment },
-      el("i", { class: "ri-attachment-2" })),
+    el("button", { class: "ctrl", title: "Attach photo/video", onclick: () => pickAttachment(chatId) },
+      el("i", { class: "ri-image-add-line" })),
     el("button", { class: "send", id: "sendBtn", disabled: true, onclick: send },
       el("i", { class: "ri-send-plane-fill" })),
   );
@@ -376,56 +381,67 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
     const field = $("#composerField");
     const text = field.innerText.trim();
     if (!text && !pendingAttachment) return;
+    const sendBtn = $("#sendBtn");
+    sendBtn.disabled = true;
 
-    let media = null;
-    if (pendingAttachment) {
-      toast("Uploading…");
-      media = await uploadToCloudinary(pendingAttachment, pendingAttachment.type.startsWith("video") ? "video" : "image");
-      pendingAttachment = null;
-    }
+    try {
+      let media = null;
+      if (pendingAttachment) {
+        toast("Uploading…");
+        media = await uploadToCloudinary(pendingAttachment, pendingAttachment.type.startsWith("video") ? "video" : "image");
+        pendingAttachment = null;
+        // Hide preview strip
+        const strip = $("#attachPreviewStrip");
+        if (strip) { strip.innerHTML = ""; strip.classList.add("hidden"); }
+      }
 
-    const msg = {
-      authorUid: state.uid,
-      text: text || "",
-      media,
-      replyTo: replyingTo ? {
-        id: replyingTo.id, text: replyingTo.text || (replyingTo.media ? "[media]" : ""),
-        authorUid: replyingTo.authorUid, authorName: replyingTo.authorName || "",
-      } : null,
-      reactions: {},
-      readBy: [state.uid],
-      createdAt: serverTimestamp(),
-    };
-    await addDoc(collection(db, ...messagesPath), msg);
-
-    // Update meta for both sides (DM) or last message (group)
-    if (isGroup) {
-      await updateDoc(doc(db, "groups", chatId), { lastMessage: text || "[media]", lastMessageAt: serverTimestamp() });
-    } else {
-      const updateMeta = async (forUid, otherUid, isMe) => {
-        const ref = doc(db, "users", forUid, "chats", chatId);
-        const exists = (await getDoc(ref)).exists();
-        const data = {
-          peerUid: otherUid,
-          lastMessage: text || "[media]",
-          lastFromMe: isMe,
-          updatedAt: serverTimestamp(),
-        };
-        if (!isMe) data.unread = increment(1);
-        if (exists) await updateDoc(ref, data); else await setDoc(ref, { ...data, unread: isMe ? 0 : 1, createdAt: serverTimestamp() });
+      const msg = {
+        authorUid: state.uid,
+        text: text || "",
+        media,
+        replyTo: replyingTo ? {
+          id: replyingTo.id, text: replyingTo.text || (replyingTo.media ? "[media]" : ""),
+          authorUid: replyingTo.authorUid, authorName: replyingTo.authorName || "",
+        } : null,
+        reactions: {},
+        readBy: [state.uid],
+        createdAt: serverTimestamp(),
       };
-      await Promise.all([
-        updateMeta(state.uid, peer.uid, true),
-        updateMeta(peer.uid, state.uid, false),
-      ]);
-      // clear my typing
-      updateDoc(doc(db, "chats", chatId), { [`typing.${state.uid}`]: deleteField() }).catch(() => {});
-    }
+      await addDoc(collection(db, ...messagesPath), msg);
 
-    field.innerText = "";
-    $("#sendBtn").disabled = true;
-    localStorage.removeItem(`orbit:draft:${chatId}`);
-    clearReply();
+      // Update meta for both sides (DM) or last message (group)
+      if (isGroup) {
+        await updateDoc(doc(db, "groups", chatId), { lastMessage: text || "[media]", lastMessageAt: serverTimestamp() });
+      } else {
+        const updateMeta = async (forUid, otherUid, isMe) => {
+          const ref = doc(db, "users", forUid, "chats", chatId);
+          const exists = (await getDoc(ref)).exists();
+          const data = {
+            peerUid: otherUid,
+            lastMessage: text || "[media]",
+            lastFromMe: isMe,
+            updatedAt: serverTimestamp(),
+          };
+          if (!isMe) data.unread = increment(1);
+          if (exists) await updateDoc(ref, data); else await setDoc(ref, { ...data, unread: isMe ? 0 : 1, createdAt: serverTimestamp() });
+        };
+        await Promise.all([
+          updateMeta(state.uid, peer.uid, true),
+          updateMeta(peer.uid, state.uid, false),
+        ]);
+        updateDoc(doc(db, "chats", chatId), { [`typing.${state.uid}`]: deleteField() }).catch(() => {});
+      }
+
+      field.innerText = "";
+      localStorage.removeItem(`orbit:draft:${chatId}`);
+      clearReply();
+    } catch (err) {
+      toast("Send failed: " + (err.message || "check Firebase config"));
+    } finally {
+      // Only re-enable if there's still text
+      const field2 = $("#composerField");
+      sendBtn.disabled = !field2?.textContent.trim() && !pendingAttachment;
+    }
   }
 };
 
@@ -642,14 +658,37 @@ const toggleEmojiPicker = (e) => {
   }, { once: true }), 0);
 };
 
-const pickAttachment = () => {
+const pickAttachment = (chatId) => {
   const input = el("input", { type: "file", accept: "image/*,video/*", style: "display:none;" });
   document.body.appendChild(input);
   input.click();
   input.onchange = () => {
     pendingAttachment = input.files[0] || null;
-    if (pendingAttachment) { toast(`Attached: ${pendingAttachment.name}`); $("#sendBtn").disabled = false; }
     input.remove();
+    if (!pendingAttachment) return;
+
+    // Show preview strip
+    const strip = $("#attachPreviewStrip");
+    if (strip) {
+      strip.innerHTML = "";
+      strip.classList.remove("hidden");
+      const objUrl = URL.createObjectURL(pendingAttachment);
+      const preview = pendingAttachment.type.startsWith("video")
+        ? el("video", { src: objUrl, muted: "true", playsinline: "" })
+        : el("img", { src: objUrl });
+      const removeBtn = el("button", { class: "remove", title: "Remove",
+        onclick: () => {
+          pendingAttachment = null;
+          strip.innerHTML = ""; strip.classList.add("hidden");
+          const f = $("#composerField");
+          $("#sendBtn").disabled = !f?.textContent.trim();
+        }
+      }, el("i", { class: "ri-close-line" }));
+      strip.appendChild(preview);
+      strip.appendChild(removeBtn);
+      strip.appendChild(el("span", { style: "font-size:13px;color:var(--text-dim);", text: pendingAttachment.name }));
+    }
+    $("#sendBtn").disabled = false;
   };
 };
 
