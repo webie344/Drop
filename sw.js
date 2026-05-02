@@ -4,7 +4,7 @@
 // Place this file at the ROOT of your site (same level as index.html).
 // =========================================================================
 
-const CACHE_NAME = "orbit-v1";
+const CACHE_NAME = "orbit-v2";
 
 // Files that make up the app shell — always available offline
 const SHELL_FILES = [
@@ -17,7 +17,46 @@ const SHELL_FILES = [
   "/icon-192.png",
   "/icon-512.png",
   "/apple-touch-icon.png",
+  "/notifications.js",
 ];
+
+// ── Push: receive and display notification ────────────────────────────────
+self.addEventListener("push", (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch {}
+
+  const title   = data.title || "Orbit";
+  const options = {
+    body:    data.body  || "",
+    icon:    data.icon  || "/icon-192.png",
+    badge:              "/icon-192.png",
+    data:    { url: data.url || "/" },
+    vibrate: [100, 50, 100],
+    requireInteraction: false,
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// ── Notification click: open the app at the right URL ────────────────────
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || "/";
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      // If app is already open, focus it and navigate
+      for (const client of list) {
+        if ("focus" in client) {
+          client.focus();
+          client.navigate(url);
+          return;
+        }
+      }
+      // Otherwise open a new window
+      if (clients.openWindow) return clients.openWindow(url);
+    })
+  );
+});
 
 // ── Install: cache the shell ─────────────────────────────────────────────
 self.addEventListener("install", (event) => {
