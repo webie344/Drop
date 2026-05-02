@@ -110,6 +110,11 @@
           <i class="ri-google-fill"></i> Continue with Google
         </button>
 
+        <!-- Install App button — always visible on the login screen -->
+        <button id="authInstallBtn" class="btn ghost block install-app-btn">
+          <i class="ri-download-2-line"></i> Add Orbit to Home Screen
+        </button>
+
         <div class="auth-foot">
           <button id="themeAuthToggle" class="link"><i class="ri-contrast-2-line"></i> Switch theme</button>
         </div>
@@ -157,6 +162,9 @@
           </nav>
           <button class="btn primary block compose-btn" id="composeBtn"><i class="ri-add-line"></i> Create</button>
           <div class="sidebar-foot">
+            <button id="sidebarInstallBtn" class="btn ghost block install-app-btn" style="margin-bottom:10px;">
+              <i class="ri-download-2-line"></i> Install App
+            </button>
             <button class="link" id="signOutBtn"><i class="ri-logout-box-r-line"></i> Sign out</button>
           </div>
         </aside>
@@ -429,56 +437,69 @@
       const iosModal       = document.getElementById("iosInstallModal");
       const iosClose       = document.getElementById("iosInstallClose");
 
+      // The always-visible install buttons
+      const authInstallBtn    = document.getElementById("authInstallBtn");
+      const sidebarInstallBtn = document.getElementById("sidebarInstallBtn");
+      const allInstallBtns    = [installBtn, authInstallBtn, sidebarInstallBtn];
+
       const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
       const isInStandaloneMode = () =>
         window.matchMedia("(display-mode: standalone)").matches ||
         window.navigator.standalone === true;
-      const dismissed = () => localStorage.getItem("orbit:install-dismissed");
 
-      // Android / Chrome — capture the browser's install prompt
-      window.addEventListener("beforeinstallprompt", (e) => {
-        e.preventDefault();
-        _deferredPrompt = e;
-        if (!isInStandaloneMode() && !dismissed()) {
-          installBanner.classList.remove("hidden");
-        }
-      });
+      // Hide install buttons if already installed
+      if (isInStandaloneMode()) {
+        authInstallBtn && authInstallBtn.classList.add("hidden");
+        sidebarInstallBtn && sidebarInstallBtn.classList.add("hidden");
+        installBanner && installBanner.classList.add("hidden");
+      }
 
-      // Android install button click
-      installBtn && installBtn.addEventListener("click", async () => {
+      // Shared handler — Android triggers native prompt, iOS opens modal
+      const handleInstallClick = async () => {
         if (_deferredPrompt) {
           _deferredPrompt.prompt();
           const { outcome } = await _deferredPrompt.userChoice;
           _deferredPrompt = null;
           installBanner.classList.add("hidden");
+        } else if (isIos()) {
+          iosModal.classList.remove("hidden");
+        } else {
+          // Prompt not yet ready — show iOS-style instructions as fallback
+          iosModal.classList.remove("hidden");
+        }
+      };
+
+      allInstallBtns.forEach(btn => btn && btn.addEventListener("click", handleInstallClick));
+
+      // Android / Chrome — capture the browser's install prompt
+      window.addEventListener("beforeinstallprompt", (e) => {
+        e.preventDefault();
+        _deferredPrompt = e;
+        if (!isInStandaloneMode()) {
+          installBanner.classList.remove("hidden");
         }
       });
 
-      // Dismiss banner
+      // Dismiss floating banner
       installDismiss && installDismiss.addEventListener("click", () => {
         installBanner.classList.add("hidden");
-        localStorage.setItem("orbit:install-dismissed", "1");
       });
 
-      // iOS — show instructions modal instead
-      if (isIos() && !isInStandaloneMode() && !dismissed()) {
-        setTimeout(() => installBanner.classList.remove("hidden"), 1500);
-        installBtn && (installBtn.textContent = "How to install");
-        installBtn && installBtn.addEventListener("click", () => {
-          iosModal.classList.remove("hidden");
-        });
+      // Show floating banner on iOS after short delay
+      if (isIos() && !isInStandaloneMode()) {
+        setTimeout(() => installBanner.classList.remove("hidden"), 2000);
       }
 
       // Close iOS modal
       iosClose && iosClose.addEventListener("click", () => {
         iosModal.classList.add("hidden");
-        localStorage.setItem("orbit:install-dismissed", "1");
-        installBanner.classList.add("hidden");
       });
 
-      // Hide banner once installed
+      // Hide everything once installed
       window.addEventListener("appinstalled", () => {
         installBanner.classList.add("hidden");
+        authInstallBtn && authInstallBtn.classList.add("hidden");
+        sidebarInstallBtn && sidebarInstallBtn.classList.add("hidden");
         _deferredPrompt = null;
       });
     </script>
@@ -532,6 +553,24 @@
       .install-dismiss {
         flex-shrink: 0;
         color: var(--text-mute);
+      }
+
+      /* Always-visible install button */
+      .install-app-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 1px solid var(--primary) !important;
+        color: var(--primary) !important;
+        font-weight: 600;
+        margin-top: 10px;
+      }
+      .install-app-btn:hover {
+        background: rgba(124, 92, 255, 0.08) !important;
+      }
+      .install-app-btn i {
+        font-size: 18px;
       }
 
       /* iOS install modal */
