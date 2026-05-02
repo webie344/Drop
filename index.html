@@ -3,8 +3,37 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+
+    <!-- ============================================================ -->
+    <!-- PWA — Theme & manifest                                        -->
+    <!-- ============================================================ -->
     <meta name="theme-color" content="#0b0b10" />
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- ============================================================ -->
+    <!-- PWA — iOS specific tags (REQUIRED for iOS home screen)        -->
+    <!-- ============================================================ -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Orbit" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- iOS splash screens (optional but recommended) -->
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- ============================================================ -->
+    <!-- SEO / Open Graph                                              -->
+    <!-- ============================================================ -->
     <title>Orbit — connect, share, chat</title>
+    <meta name="description" content="A new gravity for your circles. Connect, share, and chat on Orbit." />
+    <meta property="og:title" content="Orbit" />
+    <meta property="og:description" content="A new gravity for your circles." />
+    <meta property="og:image" content="/icon-512.png" />
+    <meta name="twitter:card" content="summary" />
+
+    <!-- ============================================================ -->
+    <!-- Fonts & icons                                                 -->
+    <!-- ============================================================ -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -295,10 +324,8 @@
     </div>
 
     <!-- ============================================================ -->
-    <!-- LIGHTWEIGHT TOAST                                             -->
+    <!-- PROFILE EDIT MODAL                                            -->
     <!-- ============================================================ -->
-
-    <!-- PROFILE EDIT MODAL -->
     <div class="modal hidden" id="profileEditModal" style="display:none;">
       <div class="modal-card pem-card">
         <div class="modal-head">
@@ -327,10 +354,240 @@
     <div id="toast" class="toast hidden"></div>
 
     <!-- ============================================================ -->
+    <!-- PWA INSTALL BANNER                                            -->
+    <!-- ============================================================ -->
+    <div id="installBanner" class="install-banner hidden">
+      <div class="install-banner-inner">
+        <img src="/icon-192.png" class="install-banner-icon" alt="Orbit" />
+        <div class="install-banner-text">
+          <strong>Add Orbit to your home screen</strong>
+          <span>Use it like a real app, no store needed</span>
+        </div>
+        <button id="installBtn" class="btn primary sm">Install</button>
+        <button id="installDismiss" class="icon-btn install-dismiss" aria-label="Dismiss">
+          <i class="ri-close-line"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- iOS install instructions modal -->
+    <div id="iosInstallModal" class="modal hidden">
+      <div class="modal-card ios-install-card">
+        <div class="modal-head">
+          <h3>Add to Home Screen</h3>
+          <button class="icon-btn" id="iosInstallClose"><i class="ri-close-line"></i></button>
+        </div>
+        <img src="/icon-192.png" class="ios-app-icon" alt="Orbit icon" />
+        <p class="ios-install-intro">Install <strong>Orbit</strong> on your iPhone in 3 taps:</p>
+        <ol class="ios-steps">
+          <li>
+            <i class="ri-share-forward-line"></i>
+            Tap the <strong>Share</strong> button at the bottom of Safari
+          </li>
+          <li>
+            <i class="ri-add-box-line"></i>
+            Scroll down and tap <strong>"Add to Home Screen"</strong>
+          </li>
+          <li>
+            <i class="ri-check-line"></i>
+            Tap <strong>"Add"</strong> — Orbit appears on your home screen!
+          </li>
+        </ol>
+        <div class="ios-install-tip">
+          <i class="ri-information-line"></i>
+          Make sure you're using <strong>Safari</strong>, not Chrome or another browser.
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
     <!-- FIREBASE + APP                                                -->
     <!-- ============================================================ -->
     <script src="https://unpkg.com/@lottiefiles/lottie-player@2.0.8/dist/lottie-player.js"></script>
     <script type="module" src="app.js"></script>
     <script type="module" src="chat.js"></script>
+
+    <!-- ============================================================ -->
+    <!-- PWA — Register Service Worker + Install prompt               -->
+    <!-- ============================================================ -->
+    <script>
+      // ── Service Worker ───────────────────────────────────────────
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker
+            .register("/sw.js")
+            .then((reg) => console.log("Orbit SW registered:", reg.scope))
+            .catch((err) => console.error("Orbit SW error:", err));
+        });
+      }
+
+      // ── PWA Install logic ────────────────────────────────────────
+      let _deferredPrompt = null;
+      const installBanner  = document.getElementById("installBanner");
+      const installBtn     = document.getElementById("installBtn");
+      const installDismiss = document.getElementById("installDismiss");
+      const iosModal       = document.getElementById("iosInstallModal");
+      const iosClose       = document.getElementById("iosInstallClose");
+
+      const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+      const isInStandaloneMode = () =>
+        window.matchMedia("(display-mode: standalone)").matches ||
+        window.navigator.standalone === true;
+      const dismissed = () => localStorage.getItem("orbit:install-dismissed");
+
+      // Android / Chrome — capture the browser's install prompt
+      window.addEventListener("beforeinstallprompt", (e) => {
+        e.preventDefault();
+        _deferredPrompt = e;
+        if (!isInStandaloneMode() && !dismissed()) {
+          installBanner.classList.remove("hidden");
+        }
+      });
+
+      // Android install button click
+      installBtn && installBtn.addEventListener("click", async () => {
+        if (_deferredPrompt) {
+          _deferredPrompt.prompt();
+          const { outcome } = await _deferredPrompt.userChoice;
+          _deferredPrompt = null;
+          installBanner.classList.add("hidden");
+        }
+      });
+
+      // Dismiss banner
+      installDismiss && installDismiss.addEventListener("click", () => {
+        installBanner.classList.add("hidden");
+        localStorage.setItem("orbit:install-dismissed", "1");
+      });
+
+      // iOS — show instructions modal instead
+      if (isIos() && !isInStandaloneMode() && !dismissed()) {
+        setTimeout(() => installBanner.classList.remove("hidden"), 1500);
+        installBtn && (installBtn.textContent = "How to install");
+        installBtn && installBtn.addEventListener("click", () => {
+          iosModal.classList.remove("hidden");
+        });
+      }
+
+      // Close iOS modal
+      iosClose && iosClose.addEventListener("click", () => {
+        iosModal.classList.add("hidden");
+        localStorage.setItem("orbit:install-dismissed", "1");
+        installBanner.classList.add("hidden");
+      });
+
+      // Hide banner once installed
+      window.addEventListener("appinstalled", () => {
+        installBanner.classList.add("hidden");
+        _deferredPrompt = null;
+      });
+    </script>
+
+    <!-- ============================================================ -->
+    <!-- PWA Install — inline styles                                   -->
+    <!-- ============================================================ -->
+    <style>
+      .install-banner {
+        position: fixed;
+        bottom: 0; left: 0; right: 0;
+        z-index: 999;
+        padding: 12px 16px;
+        padding-bottom: calc(12px + env(safe-area-inset-bottom));
+        background: var(--bg-elev);
+        border-top: 1px solid var(--line);
+        box-shadow: 0 -8px 32px rgba(0,0,0,0.18);
+        animation: slideUp 0.3s ease;
+      }
+      @keyframes slideUp {
+        from { transform: translateY(100%); }
+        to   { transform: translateY(0); }
+      }
+      .install-banner-inner {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        max-width: 620px;
+        margin: 0 auto;
+      }
+      .install-banner-icon {
+        width: 48px; height: 48px;
+        border-radius: 12px;
+        flex-shrink: 0;
+      }
+      .install-banner-text {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+      .install-banner-text strong {
+        font-size: 14px;
+        color: var(--text);
+      }
+      .install-banner-text span {
+        font-size: 12px;
+        color: var(--text-mute);
+      }
+      .install-dismiss {
+        flex-shrink: 0;
+        color: var(--text-mute);
+      }
+
+      /* iOS install modal */
+      .ios-install-card {
+        text-align: center;
+        padding: 24px;
+      }
+      .ios-app-icon {
+        width: 80px; height: 80px;
+        border-radius: 20px;
+        margin: 0 auto 16px;
+        box-shadow: 0 8px 24px rgba(124,92,255,0.35);
+      }
+      .ios-install-intro {
+        color: var(--text-dim);
+        margin: 0 0 16px;
+        font-size: 15px;
+      }
+      .ios-steps {
+        text-align: left;
+        padding-left: 0;
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        margin: 0 0 16px;
+      }
+      .ios-steps li {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 14px;
+        color: var(--text-dim);
+      }
+      .ios-steps li i {
+        font-size: 22px;
+        color: var(--primary);
+        flex-shrink: 0;
+      }
+      .ios-install-tip {
+        background: var(--bg-elev-2);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-size: 13px;
+        color: var(--text-mute);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        text-align: left;
+      }
+      .ios-install-tip i {
+        color: var(--warn);
+        font-size: 16px;
+        flex-shrink: 0;
+      }
+    </style>
   </body>
 </html>
