@@ -1,7 +1,8 @@
 // =========================================================================
 // Orbit — notifications.js
-// Web Push: permission request, push subscription, notifyUser()
-// Import this in index.html AFTER app.js
+// Shows an "Enable notifications" banner after login.
+// Browsers REQUIRE a user tap to show the permission prompt — it cannot
+// pop up automatically. This file handles that correctly.
 // =========================================================================
 
 import { db, state } from "./app.js";
@@ -9,60 +10,119 @@ import {
   doc, getDoc, updateDoc,
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
-// ── Your VAPID public key (safe to expose client-side) ───────────────────
 const VAPID_PUBLIC_KEY = "d-iV_OyNRNlxhMSK8soG9EJX42y0JXZuIdHvqZSb9GJn_yNmNUoeJ5n6N_6LujIa_yWz0iybdwpnTySf82TKXQ";
 
-// ── Convert VAPID key to Uint8Array (required by browser push API) ───────
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const base64  = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
   const rawData = atob(base64);
   return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
 }
 
-// ── Register push subscription and save to Firestore ─────────────────────
-export async function initPushNotifications() {
-  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
-  if (!state.uid) return; // not logged in yet
-
+// ── Subscribe and save to Firestore (called after user taps Allow) ────────
+async function subscribe() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
   try {
-    const permission = await Notification.requestPermission();
-    if (permission !== "granted") return;
-
     const reg = await navigator.serviceWorker.ready;
-    let subscription = await reg.pushManager.getSubscription();
-
-    if (!subscription) {
-      subscription = await reg.pushManager.subscribe({
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
       });
     }
-
-    // Save subscription object to Firestore under the user's doc
     await updateDoc(doc(db, "users", state.uid), {
-      pushSubscription: JSON.parse(JSON.stringify(subscription)),
+      pushSubscription: JSON.parse(JSON.stringify(sub)),
     });
-
-    console.log("Orbit: push notifications enabled");
+    return true;
   } catch (err) {
-    console.warn("Orbit: push setup failed", err);
+    console.warn("Orbit: push subscribe failed", err);
+    return false;
   }
 }
 
+// ── Show / hide the enable-notifications banner ───────────────────────────
+function showNotifBanner() {
+  const banner = document.getElementById("notifEnableBanner");
+  if (banner) banner.classList.remove("hidden");
+}
+function hideNotifBanner() {
+  const banner = document.getElementById("notifEnableBanner");
+  if (banner) banner.classList.add("hidden");
+}
+
+// ── Handle the "Enable" button tap ───────────────────────────────────────
+async function handleEnableClick() {
+  const btn = document.getElementById("notifEnableBtn");
+  if (btn) { btn.textContent = "Enabling…"; btn.disabled = true; }
+
+  const permission = await Notification.requestPermission();
+
+  if (permission === "granted") {
+    const ok = await subscribe();
+    hideNotifBanner();
+    if (ok) showToastMsg("Notifications enabled!");
+  } else {
+    hideNotifBanner();
+    if (btn) { btn.textContent = "Enable"; btn.disabled = false; }
+  }
+}
+
+function showToastMsg(msg) {
+  const t = document.getElementById("toast");
+  if (!t) return;
+  t.textContent = msg;
+  t.classList.remove("hidden");
+  setTimeout(() => t.classList.add("hidden"), 3000);
+}
+
+// ── Check whether to show the banner ─────────────────────────────────────
+function checkAndShowBanner() {
+  if (!("Notification" in window)) return;          // browser doesn't support it
+  if (Notification.permission === "granted") return; // already enabled
+  if (Notification.permission === "denied") return;  // user blocked it
+  if (!state.uid) return;                            // not logged in
+
+  // Show banner after a short delay so it doesn't clash with page load
+  setTimeout(showNotifBanner, 3000);
+}
+
+// ── Wire up buttons ───────────────────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", () => {
+  const enableBtn  = document.getElementById("notifEnableBtn");
+  const dismissBtn = document.getElementById("notifEnableDismiss");
+  const bellBtn    = document.getElementById("notifBtn"); // existing bell in topbar
+
+  enableBtn  && enableBtn.addEventListener("click",  handleEnableClick);
+  dismissBtn && dismissBtn.addEventListener("click", () => {
+    hideNotifBanner();
+    localStorage.setItem("orbit:notif-dismissed", "1");
+  });
+
+  // Tapping the bell icon also opens the enable flow if not yet permitted
+  if (bellBtn && Notification.permission !== "granted") {
+    bellBtn.addEventListener("click", () => {
+      if (Notification.permission === "default") showNotifBanner();
+    });
+  }
+});
+
+// ── Run once logged in ────────────────────────────────────────────────────
+document.addEventListener("orbit:auth-ready", () => {
+  if (localStorage.getItem("orbit:notif-dismissed")) return;
+  checkAndShowBanner();
+});
+
 // ── Send a push notification to another user ─────────────────────────────
-// Call this after events like: new message, new follower, new like
-// Example: await notifyUser(recipientUid, "New message", "John: Hey!", "/#chats")
+// Usage: await notifyUser(recipientUid, "New message 💬", "John: Hey!", "/#chats")
 export async function notifyUser(toUid, title, body, url = "/") {
-  if (!toUid || toUid === state.uid) return; // don't notify yourself
+  if (!toUid || toUid === state.uid) return;
   try {
-    // Fetch the recipient's push subscription from Firestore
     const snap = await getDoc(doc(db, "users", toUid));
     if (!snap.exists()) return;
     const subscription = snap.data().pushSubscription;
-    if (!subscription) return; // user hasn't enabled notifications
+    if (!subscription) return;
 
-    // Call the Vercel serverless function to send the push
     await fetch("/api/send-notification", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -72,10 +132,3 @@ export async function notifyUser(toUid, title, body, url = "/") {
     console.warn("Orbit: notifyUser failed", err);
   }
 }
-
-// ── Auto-init once auth is ready ─────────────────────────────────────────
-// Waits for the orbit:auth-ready event fired by app.js after login
-document.addEventListener("orbit:auth-ready", () => {
-  // Small delay to let the service worker finish activating
-  setTimeout(initPushNotifications, 2000);
-});
