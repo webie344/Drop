@@ -550,7 +550,15 @@ const renderMessages = async (root, snap, { isGroup, chatId, peer }) => {
         t.innerHTML = '<i class="ri-error-warning-line"></i> Message deleted';
         t.style.opacity = ".7"; t.style.fontStyle = "italic";
       } else {
-        t.innerHTML = linkify(m.text);
+        // Render plain text (preserves apostrophes, ampersands etc.) and
+        // only promote to innerHTML when the message contains a URL
+        t.textContent = m.text;
+        const raw = m.text;
+        const linked = raw.replace(/(https?:\/\/[^\s]+)/g, (url) => {
+          const safe = url.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+          return `<a href="${safe}" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:underline;">${safe}</a>`;
+        });
+        if (linked !== raw) t.innerHTML = linked;
       }
       bubble.appendChild(t);
     }

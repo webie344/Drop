@@ -110,7 +110,7 @@ export const escapeHtml = (s = "") =>
 export const linkify = (s = "") =>
   escapeHtml(s)
     .replace(/(https?:\/\/[^\s]+)/g, (m) => `<a href="${m}" target="_blank" rel="noopener">${m}</a>`)
-    .replace(/#(\w+)/g, (_, tag) => `<a class="hashtag" href="#explore/tag/${tag}">#${tag}</a>`)
+    .replace(/#([A-Za-z][\w]*)/g, (_, tag) => `<a class="hashtag" href="#explore/tag/${tag}">#${tag}</a>`)
     .replace(/@(\w+)/g, (_, u) => `<a class="mention" href="#profile-u/${u}">@${u}</a>`);
 
 export const extractHashtags = (s = "") => {
@@ -470,10 +470,28 @@ const renderFeed = (root, restoreScrollY = 0) => {
     }
 
     let _inlineReels = [];
-    getDocs(query(collection(db, "reels"), orderBy("createdAt", "desc"), limit(6))).then((rs) => { _inlineReels = rs.docs.map((d) => ({ id: d.id, ...d.data() })); }).catch(() => {});
-    posts.forEach((p, idx) => {
+    try {
+      const _rs = await getDocs(query(collection(db, "reels"), orderBy("createdAt", "desc"), limit(6)));
+      _inlineReels = _rs.docs.map((d) => ({ id: d.id, ...d.data() }));
+    } catch {}
+    // Algorithm: score posts by affinity (following > hashtag match > engagement > recency)
+    const _following = state.me?.following || [];
+    const _interests = state.me?.interests || [];
+    const _scored = posts.map((p) => {
+      let score = 0;
+      if (_following.includes(p.authorUid)) score += 50;
+      if (_interests.some((tag) => (p.hashtags || []).includes(tag))) score += 30;
+      score += Math.min((p.orbitCount || 0) * 2 + (p.commentCount || 0), 30);
+      score += Math.max(0, 20 - Math.floor(((Date.now() - (p.createdAt?.toMillis?.() || Date.now())) / 3600000)));
+      return { p, score };
+    });
+    _scored.sort((a, b) => b.score - a.score);
+    _scored.forEach(({ p }, idx) => {
       list.appendChild(renderPost(p, byUid[p.authorUid]));
-      if ((idx + 1) % 5 === 0 && _inlineReels.length) { const _r = _inlineReels.shift(); if (_r) list.appendChild(renderFeedReelCard(_r)); }
+      if ((idx + 1) % 5 === 0 && _inlineReels.length) {
+        const _r = _inlineReels.shift();
+        if (_r) list.appendChild(renderFeedReelCard(_r));
+      }
     });
 
     // Restore scroll position after coming back from a post
@@ -573,13 +591,32 @@ const renderPost = (p, author, opts = {}) => {
         fmtTime(p.createdAt),
       )
     ),
-    isMine ? el("button", { class: "icon-btn more", onclick: async (e) => {
+    !isMine ? (() => {
+      let _isFollowing = (state.me?.following || []).includes(author?.uid);
+      const fbtn = el("button", { class: `follow-btn${_isFollowing ? " following" : ""}` },
+        _isFollowing ? "Following" : "Follow");
+      fbtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        _isFollowing = !_isFollowing;
+        fbtn.textContent = _isFollowing ? "Following" : "Follow";
+        fbtn.classList.toggle("following", _isFollowing);
+        await updateDoc(doc(db, "users", state.uid), {
+          following: _isFollowing ? arrayUnion(author.uid) : arrayRemove(author.uid),
+        }).catch(() => {});
+        await updateDoc(doc(db, "users", author.uid), {
+          followers: _isFollowing ? arrayUnion(state.uid) : arrayRemove(state.uid),
+        }).catch(() => {});
+        if (_isFollowing) writeNotif(author.uid, "follow", {}).catch(() => {});
+        if (state.me) { state.me.following = _isFollowing ? [...(state.me.following||[]), author.uid] : (state.me.following||[]).filter((x)=>x!==author.uid); }
+      });
+      return fbtn;
+    })() : el("button", { class: "icon-btn more", onclick: async (e) => {
       e.stopPropagation();
       if (confirm("Delete this post?")) {
         await deleteDoc(doc(db, "posts", p.id));
         toast("Post deleted");
       }
-    }}, el("i", { class: "ri-more-2-line" })) : null,
+    }}, el("i", { class: "ri-more-2-line" })),
   );
   post.appendChild(head);
 
@@ -809,12 +846,49 @@ const renderReels = async (root) => {
   wrap.innerHTML = "";
   reels.forEach((r) => wrap.appendChild(renderReel(r, map[r.authorUid])));
 
-  // Intersection-observer autoplay (don't restart if already playing the same video)
+  // Map video → Audio track so IntersectionObserver can control both
+  const _reelAudioMap = new WeakMap();
+  wrap.querySelectorAll(".reel").forEach((reelEl) => {
+    const vid = reelEl.querySelector("video");
+    const badge = reelEl.querySelector(".reel-music-badge");
+    if (badge) {
+      const trackUrl = badge._trackUrl; // set below
+      if (trackUrl) {
+        const aud = new Audio(trackUrl);
+        aud.loop = true; aud.volume = 0.6;
+        _reelAudioMap.set(vid, aud);
+      }
+    }
+  });
+  // Stash track URL on the badge element so the map can find it
+  wrap.querySelectorAll(".reel-music-badge").forEach((badge, i) => {
+    const reelEl = badge.closest(".reel");
+    const vid = reelEl?.querySelector("video");
+    // Find the reel data by index to get music URL
+    const reelData = reels[i];
+    if (reelData?.music?.url && vid) {
+      const aud = new Audio(reelData.music.url);
+      aud.loop = true; aud.volume = 0.6;
+      _reelAudioMap.set(vid, aud);
+    }
+  });
+
+  let _currentAudio = null;
   const io = new IntersectionObserver((entries) => {
     entries.forEach((e) => {
       const v = e.target;
-      if (e.intersectionRatio >= 0.6) { if (v.paused) v.play().catch(() => {}); }
-      else { if (!v.paused) v.pause(); }
+      const aud = _reelAudioMap.get(v);
+      if (e.intersectionRatio >= 0.6) {
+        if (v.paused) v.play().catch(() => {});
+        if (aud && aud !== _currentAudio) {
+          if (_currentAudio) { _currentAudio.pause(); _currentAudio.currentTime = 0; }
+          _currentAudio = aud;
+          aud.play().catch(() => {});
+        }
+      } else {
+        if (!v.paused) v.pause();
+        if (aud) { aud.pause(); aud.currentTime = 0; if (_currentAudio === aud) _currentAudio = null; }
+      }
     });
   }, { threshold: [0, 0.6, 1] });
   wrap.querySelectorAll("video").forEach((v) => io.observe(v));
@@ -862,6 +936,29 @@ const renderReel = (r, author) => {
     onclick: (e) => { e.stopPropagation(); e.target.muted = !e.target.muted; }
   });
 
+  // Follow button for reel author
+  let _reelFollowing = (state.me?.following || []).includes(author?.uid);
+  const reelFollowBtn = r.authorUid !== state.uid ? (() => {
+    const btn = el("button", { class: `reel-follow-btn${_reelFollowing ? " following" : ""}` },
+      _reelFollowing ? "Following" : "+ Follow");
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      _reelFollowing = !_reelFollowing;
+      btn.textContent = _reelFollowing ? "Following" : "+ Follow";
+      btn.classList.toggle("following", _reelFollowing);
+      await updateDoc(doc(db, "users", state.uid), { following: _reelFollowing ? arrayUnion(author.uid) : arrayRemove(author.uid) }).catch(() => {});
+      await updateDoc(doc(db, "users", author.uid), { followers: _reelFollowing ? arrayUnion(state.uid) : arrayRemove(state.uid) }).catch(() => {});
+      if (_reelFollowing) writeNotif(author.uid, "follow", {}).catch(() => {});
+      if (state.me) { state.me.following = _reelFollowing ? [...(state.me.following||[]), author.uid] : (state.me.following||[]).filter((x)=>x!==author.uid); }
+    });
+    return btn;
+  })() : null;
+
+  // Music badge for this reel (if it was uploaded with music)
+  const musicBadgeEl = r.music?.name
+    ? el("div", { class: "reel-music-badge" }, el("i", { class: "ri-music-2-line" }), " " + r.music.name + " — " + (r.music.artist || ""))
+    : null;
+
   const node = el("div", { class: "reel" },
     video,
     el("div", { class: "reel-overlay" }),
@@ -870,7 +967,9 @@ const renderReel = (r, author) => {
         el("img", { class: "avatar sm", src: avatarFor(author) }),
         author?.name || "User",
         author?.verified ? el("span", { class: "verified", html: '<i class="ri-check-line"></i>' }) : null,
+        reelFollowBtn,
       ),
+      musicBadgeEl,
       r.caption ? el("div", { class: "caption", text: r.caption }) : null,
     ),
     el("div", { class: "reel-actions" }, likeBtn, cmtBtn, shareBtn),
@@ -1540,8 +1639,16 @@ const renderFeedReelCard = (reel) => {
   card.appendChild(vid);
   if (reel.caption) card.appendChild(el("div", { class: "frc-caption", text: reel.caption.slice(0, 80) }));
   card.appendChild(el("div", { class: "frc-actions" }, el("button", { class: "btn ghost", style: "font-size:13px;gap:6px;", onclick: () => location.hash = "#reels" }, el("i", { class: "ri-play-circle-line" }), "Watch more reels")));
-  vid.addEventListener("click", () => vid.paused ? vid.play() : vid.pause());
-  new IntersectionObserver((en) => en.forEach((e) => e.isIntersecting ? vid.play().catch(()=>{}) : vid.pause()), { threshold: 0.5 }).observe(vid);
+  let _frcAudio = reel.music?.url ? new Audio(reel.music.url) : null;
+  if (_frcAudio) { _frcAudio.loop = true; _frcAudio.volume = 0.6; }
+  vid.addEventListener("click", () => {
+    if (vid.paused) { vid.play(); _frcAudio?.play().catch(()=>{}); }
+    else { vid.pause(); _frcAudio?.pause(); }
+  });
+  new IntersectionObserver((en) => en.forEach((e) => {
+    if (e.isIntersecting) { vid.play().catch(()=>{}); _frcAudio?.play().catch(()=>{}); }
+    else { vid.pause(); if (_frcAudio) { _frcAudio.pause(); _frcAudio.currentTime = 0; } }
+  }), { threshold: 0.5 }).observe(vid);
   return card;
 };
 // =========================================================================
@@ -1633,16 +1740,36 @@ document.getElementById("experienceForm")?.addEventListener("submit", async (e) 
 // MUSIC TRACKS (free — SoundHelix)
 // =========================================================================
 const MUSIC_TRACKS = [
-  { id:"1",  name:"Upbeat Pop",       url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" },
-  { id:"2",  name:"Chill Electronic", url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3" },
-  { id:"3",  name:"Ambient Dreams",   url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3" },
-  { id:"4",  name:"Jazz Vibes",       url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3" },
-  { id:"5",  name:"Energetic Rock",   url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3" },
-  { id:"6",  name:"Smooth RnB",       url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3" },
-  { id:"7",  name:"Epic Cinematic",   url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3" },
-  { id:"8",  name:"Lo-fi Study",      url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3" },
-  { id:"9",  name:"Dance Floor",      url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-9.mp3" },
-  { id:"10", name:"Acoustic Folk",    url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3" },
+  { id:"1",  name:"Midnight Drive",        artist:"BLVK",      url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" },
+  { id:"2",  name:"Gold Rush",             artist:"A.Volt",    url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3" },
+  { id:"3",  name:"Coastal",              artist:"Dray",       url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3" },
+  { id:"4",  name:"Elevation",            artist:"Y2K",        url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3" },
+  { id:"5",  name:"Neon Lights",          artist:"Kano",       url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3" },
+  { id:"6",  name:"No Cap",               artist:"Meeze",      url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3" },
+  { id:"7",  name:"On Sight",             artist:"G.Loc",      url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3" },
+  { id:"8",  name:"Lo-fi Sunday",         artist:"Mellow",     url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3" },
+  { id:"9",  name:"Dance All Night",      artist:"Flux",       url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-9.mp3" },
+  { id:"10", name:"Rooftop Sessions",     artist:"Mika J",     url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3" },
+  { id:"11", name:"Trap God",             artist:"Xen",        url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-11.mp3" },
+  { id:"12", name:"Real Ones",            artist:"Callum",     url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-12.mp3" },
+  { id:"13", name:"City Never Sleeps",    artist:"Prism",      url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-13.mp3" },
+  { id:"14", name:"Waves",               artist:"Blue R.",     url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-14.mp3" },
+  { id:"15", name:"Feel It",             artist:"Zara K",      url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-15.mp3" },
+  { id:"16", name:"Block Party",         artist:"Sav",         url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-16.mp3" },
+  { id:"17", name:"Summer 99",           artist:"Levi T.",     url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-17.mp3" },
+  { id:"18", name:"Drip Season",         artist:"Eko",         url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" },
+  { id:"19", name:"Pull Up",             artist:"Dray",        url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3" },
+  { id:"20", name:"Afterhours",          artist:"BLVK",        url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3" },
+  { id:"21", name:"Late Nights",         artist:"Mika J",      url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3" },
+  { id:"22", name:"Levitate",            artist:"A.Volt",      url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3" },
+  { id:"23", name:"On Top",              artist:"G.Loc",       url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3" },
+  { id:"24", name:"Locked In",           artist:"Kano",        url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3" },
+  { id:"25", name:"Frequency",           artist:"Prism",       url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3" },
+  { id:"26", name:"Do It Again",         artist:"Flux",        url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-9.mp3" },
+  { id:"27", name:"For My People",       artist:"Sav",         url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3" },
+  { id:"28", name:"Vibes",               artist:"Callum",      url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-11.mp3" },
+  { id:"29", name:"Lifestyle",           artist:"Y2K",         url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-12.mp3" },
+  { id:"30", name:"No Pressure",         artist:"Xen",         url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-13.mp3" },
 ];
 let _selectedTrack = null;
 document.getElementById("openMusicPicker")?.addEventListener("click", () => {
@@ -1650,7 +1777,7 @@ document.getElementById("openMusicPicker")?.addEventListener("click", () => {
   list.classList.toggle("hidden");
   if (!list.classList.contains("hidden") && !list.childElementCount) {
     MUSIC_TRACKS.forEach((t) => {
-      const row = el("div", { class: "music-track-row" + (_selectedTrack?.id === t.id ? " active" : "") }, el("i", { class: "ri-music-2-line" }), el("div", { class: "mtr-info" }, el("div", { class: "mtr-name" }, t.name), el("div", { class: "mtr-artist" }, "Free music")));
+      const row = el("div", { class: "music-track-row" + (_selectedTrack?.id === t.id ? " active" : "") }, el("i", { class: "ri-music-2-line" }), el("div", { class: "mtr-info" }, el("div", { class: "mtr-name" }, t.name), el("div", { class: "mtr-artist" }, t.artist || "Free music")));
       row.addEventListener("click", () => {
         _selectedTrack = t;
         document.querySelectorAll(".music-track-row").forEach((r) => r.classList.remove("active")); row.classList.add("active");
