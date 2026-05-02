@@ -17,6 +17,76 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
+// VIDEO PLAYER — custom player replacing bare <video controls>
+// ─────────────────────────────────────────────────────────────────────────────
+const _cloudPoster = (url) => {
+  try { return url.replace(/\.mp4(\?.*)?$/, ".jpg").replace(/\.webm(\?.*)?$/, ".jpg").replace(/\.mov(\?.*)?$/, ".jpg"); }
+  catch { return ""; }
+};
+const buildVideoPlayer = (url, opts = {}) => {
+  const poster = _cloudPoster(url);
+  const video = el("video", { src: url, poster, preload: "metadata", playsinline: "" });
+  const playIcon  = el("i", { class: "ri-play-fill" });
+  const overlay   = el("div", { class: "vp-overlay" }, el("button", { class: "vp-big-play" }, playIcon));
+  const playSmI   = el("i", { class: "ri-play-fill" });
+  const playSmBtn = el("button", { class: "vp-btn" }, playSmI);
+  const played    = el("div", { class: "vp-played" });
+  const seek      = el("div", { class: "vp-seek" }, played);
+  const timeEl    = el("span", { class: "vp-time", text: "0:00" });
+  const muteI     = el("i", { class: "ri-volume-up-line" });
+  const muteBtn   = el("button", { class: "vp-btn" }, muteI);
+  const fullBtn   = el("button", { class: "vp-btn" }, el("i", { class: "ri-fullscreen-line" }));
+  const bar       = el("div", { class: "vp-bar" }, playSmBtn, seek, timeEl, muteBtn, fullBtn);
+  const wrap      = el("div", { class: "vid-player" }, video, overlay, bar);
+  const togglePlay = () => { video.paused ? video.play() : video.pause(); };
+  overlay.onclick = togglePlay;
+  playSmBtn.onclick = (e) => { e.stopPropagation(); togglePlay(); };
+  video.addEventListener("play",  () => { playIcon.className = playSmI.className = "ri-pause-fill"; overlay.classList.add("playing"); });
+  video.addEventListener("pause", () => { playIcon.className = playSmI.className = "ri-play-fill";  overlay.classList.remove("playing"); });
+  video.addEventListener("ended", () => { playIcon.className = playSmI.className = "ri-play-fill";  overlay.classList.remove("playing"); played.style.width = "0%"; });
+  video.addEventListener("timeupdate", () => {
+    const pct = video.duration ? (video.currentTime / video.duration) * 100 : 0;
+    played.style.width = pct + "%";
+    const s = Math.floor(video.currentTime);
+    timeEl.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  });
+  seek.onclick = (e) => { if (!video.duration) return; const r = seek.getBoundingClientRect(); video.currentTime = ((e.clientX - r.left) / r.width) * video.duration; };
+  muteBtn.onclick = (e) => { e.stopPropagation(); video.muted = !video.muted; muteI.className = video.muted ? "ri-volume-mute-line" : "ri-volume-up-line"; };
+  fullBtn.onclick = (e) => { e.stopPropagation(); (video.requestFullscreen || video.webkitRequestFullscreen || (() => {})).call(video); };
+  return wrap;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VOICE NOTE — custom waveform player
+// ─────────────────────────────────────────────────────────────────────────────
+const buildVoicePlayer = (url) => {
+  const audio   = new Audio(url);
+  const playI   = el("i", { class: "ri-play-fill" });
+  const playBtn = el("button", { class: "vnp-play" }, playI);
+  const played  = el("div", { class: "vnp-played" });
+  const bar     = el("div", { class: "vnp-bar" }, played);
+  const timeEl  = el("span", { class: "vnp-time", text: "0:00" });
+  const wrap    = el("div", { class: "voice-note-player" }, playBtn, bar, timeEl);
+  playBtn.onclick = () => { audio.paused ? audio.play() : audio.pause(); };
+  audio.addEventListener("play",  () => { playI.className = "ri-pause-fill"; });
+  audio.addEventListener("pause", () => { playI.className = "ri-play-fill";  });
+  audio.addEventListener("ended", () => { playI.className = "ri-play-fill"; played.style.width = "0%"; });
+  audio.addEventListener("timeupdate", () => {
+    const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+    played.style.width = pct + "%";
+    const s = Math.floor(audio.currentTime);
+    timeEl.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  });
+  bar.onclick = (e) => { if (!audio.duration) return; const r = bar.getBoundingClientRect(); audio.currentTime = ((e.clientX - r.left) / r.width) * audio.duration; };
+  return wrap;
+};
+
+// Voice recording state
+let _mediaRecorder = null;
+let _audioChunks   = [];
+let _recTimerTo    = null;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // STICKER PACKS — Google Noto Animated Emoji (Google CDN, no API key needed)
 // ─────────────────────────────────────────────────────────────────────────────
 const _G = (code) => `https://fonts.gstatic.com/s/e/notoemoji/latest/${code}/lottie.json`;
@@ -390,7 +460,11 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
   composerField.addEventListener("input", () => {
     const hasText = composerField.textContent.trim().length > 0;
     const sendBtn = bottomBar.querySelector("#sendBtn");
-    if (sendBtn) sendBtn.disabled = !hasText && !pendingAttachment;
+    const micBtn  = bottomBar.querySelector("#micBtn");
+    const active  = hasText || !!pendingAttachment;
+    if (sendBtn) { sendBtn.disabled = !active; sendBtn.style.display = active ? "" : "none"; }
+    if (micBtn)  micBtn.style.display = active ? "none" : "";
+    if (sendBtn) sendBtn.disabled = !active;
     // typing indicator
     if (!isGroup) {
       updateDoc(doc(db, "chats", chatId), { typing: { [state.uid]: serverTimestamp() } }, { merge: true }).catch(async () => {
@@ -408,6 +482,12 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
   });
   composerField.addEventListener("focus", () => { const p = document.getElementById("orbitStickerPicker"); if (p) { p.classList.add("closing"); setTimeout(() => p.remove(), 220); } });
 
+  const sendBtnEl = el("button", { class: "send", id: "sendBtn", disabled: true, onclick: send },
+    el("i", { class: "ri-send-plane-fill" }));
+  const micBtnEl = el("button", { class: "ctrl mic-btn", id: "micBtn", title: "Voice note",
+    onclick: () => startVoiceRecord(chatId, isGroup) },
+    el("i", { class: "ri-mic-line" }));
+
   const composer = el("div", { class: "composer" },
     el("button", { class: "ctrl", title: "Emoji", onclick: toggleEmojiPicker },
       el("i", { class: "ri-emotion-line" })),
@@ -416,8 +496,8 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
     composerField,
     el("button", { class: "ctrl", title: "Attach photo/video", onclick: () => pickAttachment(chatId) },
       el("i", { class: "ri-image-add-line" })),
-    el("button", { class: "send", id: "sendBtn", disabled: true, onclick: send },
-      el("i", { class: "ri-send-plane-fill" })),
+    micBtnEl,
+    sendBtnEl,
   );
   bottomBar.appendChild(composer);
   view.appendChild(bottomBar);
@@ -516,7 +596,10 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
       toast("Send failed: " + (err.message || "check Firebase config"));
     } finally {
       const f2 = $("#composerField");
-      sendBtn.disabled = !f2?.textContent.trim() && !pendingAttachment;
+      const hasLeftover = !!f2?.textContent.trim() || !!pendingAttachment;
+      sendBtn.disabled = !hasLeftover;
+      sendBtn.style.display = hasLeftover ? "" : "none";
+      const _mb = document.getElementById("micBtn"); if (_mb) _mb.style.display = hasLeftover ? "none" : "";
     }
   }
 
@@ -537,10 +620,58 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
 };
 
 // =========================================================================
+// ─────────────────────────────────────────────────────────────────────────────
+// VOICE RECORDING
+// ─────────────────────────────────────────────────────────────────────────────
+const startVoiceRecord = async (chatId, isGroup) => {
+  if (_mediaRecorder) { stopVoiceRecord(chatId, isGroup); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    _audioChunks = [];
+    const mime = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/ogg";
+    _mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
+    _mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) _audioChunks.push(e.data); };
+    _mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(_audioChunks, { type: _mediaRecorder.mimeType });
+      const file = new File([blob], "voice.webm", { type: blob.type });
+      toast("Sending voice note…");
+      try {
+        const up = await uploadToCloudinary(file, "video");
+        const colPath = isGroup ? ["groups", chatId, "messages"] : ["chats", chatId, "messages"];
+        await addDoc(collection(db, ...colPath), {
+          authorUid: state.uid, type: "voice",
+          media: { url: up.url, type: "audio", duration: up.duration || 0 },
+          createdAt: serverTimestamp(), readBy: [state.uid],
+        });
+      } catch { toast("Could not send voice note"); }
+      _mediaRecorder = null; _audioChunks = [];
+      const micBtn = document.getElementById("micBtn");
+      if (micBtn) { micBtn.classList.remove("recording"); micBtn.querySelector("i").className = "ri-mic-line"; }
+    };
+    _mediaRecorder.start(200);
+    const micBtn = document.getElementById("micBtn");
+    if (micBtn) { micBtn.classList.add("recording"); micBtn.querySelector("i").className = "ri-stop-circle-line"; }
+    toast("Recording… tap mic again to send");
+    _recTimerTo = setTimeout(() => stopVoiceRecord(chatId, isGroup), 120000);
+  } catch { toast("Microphone access denied"); }
+};
+
+const stopVoiceRecord = (chatId, isGroup) => {
+  clearTimeout(_recTimerTo);
+  if (_mediaRecorder && _mediaRecorder.state !== "inactive") _mediaRecorder.stop();
+};
+
 // 8. RENDER MESSAGES (with day dividers, bubbles, reactions, replies)
 // =========================================================================
 const renderMessages = async (root, snap, { isGroup, chatId, peer }) => {
   const wasNearBottom = root.scrollTop + root.clientHeight >= root.scrollHeight - 80;
+  // Save existing video players keyed by src so they don't re-buffer on re-render
+  const _savedVids = {};
+  root.querySelectorAll(".vid-player").forEach((vp) => {
+    const v = vp.querySelector("video");
+    if (v?.src) _savedVids[v.src] = vp;
+  });
   root.innerHTML = "";
 
   if (snap.empty) {
@@ -594,13 +725,16 @@ const renderMessages = async (root, snap, { isGroup, chatId, peer }) => {
       ));
     }
 
-    if (m.media?.url) {
-      const mediaWrap = el("div", { class: "b-media" },
-        m.media.type === "video"
-          ? el("video", { src: m.media.url, controls: "" })
-          : el("img", { src: m.media.url, loading: "lazy" }),
-      );
-      bubble.appendChild(mediaWrap);
+    if (m.type === "voice" && m.media?.url) {
+      bubble.appendChild(buildVoicePlayer(m.media.url));
+    } else if (m.media?.url) {
+      let mediaContent;
+      if (m.media.type === "video") {
+        mediaContent = _savedVids[m.media.url] || buildVideoPlayer(m.media.url);
+      } else {
+        mediaContent = el("img", { src: m.media.url, loading: "lazy" });
+      }
+      bubble.appendChild(el("div", { class: "b-media" }, mediaContent));
     }
 
     // Sticker message — remove ALL bubble styling so it's fully transparent like WhatsApp
@@ -705,7 +839,7 @@ const setReply = (m, authorName) => {
   p.appendChild(el("div", { class: "bar" }));
   p.appendChild(el("div", { class: "info" },
     el("div", { class: "name", text: `Replying to ${authorName || "user"}` }),
-    el("div", { class: "text", text: (m.text || (m.media ? "[media]" : "")).slice(0, 140) }),
+    el("div", { class: "text", text: (m.text || (m.media ? "[media]" : "")).split(/\s+/).slice(0,5).join(" ") + ((m.text||"").split(/\s+/).length > 5 ? "…" : "") }),
   ));
   p.appendChild(el("button", { class: "icon-btn", onclick: clearReply }, el("i", { class: "ri-close-line" })));
   $("#composerField")?.focus();

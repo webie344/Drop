@@ -63,6 +63,42 @@ export const state = {
 // =========================================================================
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+const _cloudPoster = (url) => {
+  try { return url.replace(/\.mp4(\?.*)?$/, ".jpg").replace(/\.webm(\?.*)?$/, ".jpg").replace(/\.mov(\?.*)?$/, ".jpg"); }
+  catch { return ""; }
+};
+const buildVideoPlayer = (url) => {
+  const poster = _cloudPoster(url);
+  const video = el("video", { src: url, poster, preload: "metadata", playsinline: "" });
+  const playIcon  = el("i", { class: "ri-play-fill" });
+  const overlay   = el("div", { class: "vp-overlay" }, el("button", { class: "vp-big-play" }, playIcon));
+  const playSmI   = el("i", { class: "ri-play-fill" });
+  const playSmBtn = el("button", { class: "vp-btn" }, playSmI);
+  const played    = el("div", { class: "vp-played" });
+  const seek      = el("div", { class: "vp-seek" }, played);
+  const timeEl    = el("span", { class: "vp-time", text: "0:00" });
+  const muteI     = el("i", { class: "ri-volume-up-line" });
+  const muteBtn   = el("button", { class: "vp-btn" }, muteI);
+  const fullBtn   = el("button", { class: "vp-btn" }, el("i", { class: "ri-fullscreen-line" }));
+  const bar       = el("div", { class: "vp-bar" }, playSmBtn, seek, timeEl, muteBtn, fullBtn);
+  const wrap      = el("div", { class: "vid-player" }, video, overlay, bar);
+  const togglePlay = () => { video.paused ? video.play() : video.pause(); };
+  overlay.onclick = togglePlay;
+  playSmBtn.onclick = (e) => { e.stopPropagation(); togglePlay(); };
+  video.addEventListener("play",  () => { playIcon.className = playSmI.className = "ri-pause-fill"; overlay.classList.add("playing"); });
+  video.addEventListener("pause", () => { playIcon.className = playSmI.className = "ri-play-fill";  overlay.classList.remove("playing"); });
+  video.addEventListener("ended", () => { playIcon.className = playSmI.className = "ri-play-fill";  overlay.classList.remove("playing"); played.style.width = "0%"; });
+  video.addEventListener("timeupdate", () => {
+    const pct = video.duration ? (video.currentTime / video.duration) * 100 : 0;
+    played.style.width = pct + "%";
+    const s = Math.floor(video.currentTime);
+    timeEl.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  });
+  seek.onclick = (e) => { if (!video.duration) return; const r = seek.getBoundingClientRect(); video.currentTime = ((e.clientX - r.left) / r.width) * video.duration; };
+  muteBtn.onclick = (e) => { e.stopPropagation(); video.muted = !video.muted; muteI.className = video.muted ? "ri-volume-mute-line" : "ri-volume-up-line"; };
+  fullBtn.onclick = (e) => { e.stopPropagation(); (video.requestFullscreen || video.webkitRequestFullscreen || (() => {})).call(video); };
+  return wrap;
+};
 export const el = (tag, attrs = {}, ...children) => {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -535,8 +571,7 @@ const renderMediaCarousel = (mediaRaw) => {
   if (items.length === 1) {
     const m = items[0];
     if (m.type === "video") {
-      return el("div", { class: "post-media" },
-        el("video", { src: m.url, controls: "", playsinline: "", preload: "metadata", style: "width:100%;max-height:480px;border-radius:var(--radius);object-fit:cover;" }));
+      return el("div", { class: "post-media" }, buildVideoPlayer(m.url));
     }
     return el("div", { class: "post-media" }, el("img", { src: m.url, loading: "lazy" }));
   }
@@ -545,7 +580,7 @@ const renderMediaCarousel = (mediaRaw) => {
   const slides = items.map((m, i) => {
     const slide = el("div", { class: "carousel-slide", style: i === 0 ? "" : "display:none;" });
     if (m.type === "video") {
-      slide.appendChild(el("video", { src: m.url, controls: "", playsinline: "", preload: "metadata" }));
+      slide.appendChild(buildVideoPlayer(m.url));
     } else {
       slide.appendChild(el("img", { src: m.url, loading: "lazy" }));
     }
@@ -931,7 +966,7 @@ const renderReel = (r, author) => {
     }
   }, el("i", { class: "ri-share-forward-line" }), el("span", { text: "Share" }));
 
-  const video = el("video", { src: r.media.url, loop: true, playsinline: "", muted: "",
+  const video = el("video", { src: r.media.url, poster: _cloudPoster(r.media.url), loop: true, playsinline: "", muted: "",
     "webkit-playsinline": "",
     onclick: (e) => { e.stopPropagation(); e.target.muted = !e.target.muted; }
   });
