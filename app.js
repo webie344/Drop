@@ -641,7 +641,12 @@ const renderPost = (p, author, opts = {}) => {
         await updateDoc(doc(db, "users", author.uid), {
           followers: _isFollowing ? arrayUnion(state.uid) : arrayRemove(state.uid),
         }).catch(() => {});
-        if (_isFollowing) writeNotif(author.uid, "follow", {}).catch(() => {});
+        if (_isFollowing) {
+          writeNotif(author.uid, "follow", {}).catch(() => {});
+          import("./notifications.js").then(({ notifyUser }) =>
+            notifyUser(author.uid, state.me?.name || "Someone", "started following you", "/#profile/" + state.uid)
+          ).catch(() => {});
+        }
         if (state.me) { state.me.following = _isFollowing ? [...(state.me.following||[]), author.uid] : (state.me.following||[]).filter((x)=>x!==author.uid); }
       });
       return fbtn;
@@ -983,7 +988,12 @@ const renderReel = (r, author) => {
       btn.classList.toggle("following", _reelFollowing);
       await updateDoc(doc(db, "users", state.uid), { following: _reelFollowing ? arrayUnion(author.uid) : arrayRemove(author.uid) }).catch(() => {});
       await updateDoc(doc(db, "users", author.uid), { followers: _reelFollowing ? arrayUnion(state.uid) : arrayRemove(state.uid) }).catch(() => {});
-      if (_reelFollowing) writeNotif(author.uid, "follow", {}).catch(() => {});
+      if (_reelFollowing) {
+        writeNotif(author.uid, "follow", {}).catch(() => {});
+        import("./notifications.js").then(({ notifyUser }) =>
+          notifyUser(author.uid, state.me?.name || "Someone", "started following you", "/#profile/" + state.uid)
+        ).catch(() => {});
+      }
       if (state.me) { state.me.following = _reelFollowing ? [...(state.me.following||[]), author.uid] : (state.me.following||[]).filter((x)=>x!==author.uid); }
     });
     return btn;

@@ -587,8 +587,11 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
         };
         await Promise.all([updateMeta(state.uid, peer.uid, true), updateMeta(peer.uid, state.uid, false)]);
         updateDoc(doc(db, "chats", chatId), { [`typing.${state.uid}`]: deleteField() }).catch(() => {});
-        // Notify recipient
+        // Notify recipient — in-app bell + push notification
         writeNotif(peer.uid, "message", { text: (text || "[media]").slice(0, 60) }).catch(() => {});
+        import("./notifications.js").then(({ notifyUser }) =>
+          notifyUser(peer.uid, state.me?.name || "New message", text || "Sent you a message", "/#chats")
+        ).catch(() => {});
       }
     } catch (err) {
       optEl?.remove();
