@@ -1,10 +1,13 @@
 // =========================================================================
-// Orbit — chat.js  (FIXED: optimistic message sending)
+// Orbit — chat.js
+// Chats list, real-time messaging, DMs + groups, replies, reactions,
+// edit/delete, typing indicator, read receipts, per-chat customization,
+// emoji picker, attachments via Cloudinary, swipe-to-reply on touch.
 // =========================================================================
 
 import {
   state, db, auth, $, $$, el, fmtTime, fmtDay, escapeHtml, linkify,
-  toast, avatarFor, fetchUser, uploadToCloudinary,
+  toast, avatarFor, fetchUser, uploadToCloudinary, writeNotif,
 } from "./app.js";
 
 import {
@@ -53,8 +56,10 @@ const openChats = (target) => {
   const content = $("#content");
   content.innerHTML = "";
 
+  // Lock the content container so the chat grid owns all scrolling
   content.classList.add("chat-active");
 
+  // Clean up when user navigates away
   const removeActive = () => {
     content.classList.remove("chat-active");
   };
@@ -63,6 +68,7 @@ const openChats = (target) => {
   const route = el("div", { class: "chats-route", id: "chatsRoute" });
   content.appendChild(route);
 
+  // Left: chat list
   const list = el("div", { class: "chats-list" },
     el("div", { class: "head" },
       el("h2", {}, "Chats"),
@@ -79,6 +85,7 @@ const openChats = (target) => {
   );
   route.appendChild(list);
 
+  // Right: chat view (empty placeholder)
   const view = el("div", { class: "chat-view", id: "chatView" },
     el("div", { class: "chat-empty" },
       el("i", { class: "ri-chat-3-line" }),
@@ -90,20 +97,24 @@ const openChats = (target) => {
   loadChatsList();
 
   if (target) {
+    // target may be a uid (DM) or a group id
     openChatById(target);
   }
 };
 
 // =========================================================================
-// 4. CHAT LIST
+// 4. CHAT LIST  — DMs (chats/) and Groups I'm in
 // =========================================================================
 const loadChatsList = () => {
   const scroll = $("#chatsScroll");
+  // Clean up previous listener
   if (state.chatsUnsub) { state.chatsUnsub(); state.chatsUnsub = null; }
 
+  // We listen to my chat-meta docs at users/{uid}/chats — these are always created/updated via sendMessage.
   state.chatsUnsub = onSnapshot(
     query(collection(db, "users", state.uid, "chats"), orderBy("updatedAt", "desc"), limit(80)),
     async (snap) => {
+      // also fetch groups I'm a member of
       const groupQs = await getDocs(query(collection(db, "groups"), where("members", "array-contains", state.uid)));
       const groups = groupQs.docs.map((d) => ({
         id: d.id, kind: "group", ...d.data(),
@@ -140,6 +151,7 @@ const loadChatsList = () => {
       if (pill) { pill.hidden = totalUnread === 0; pill.textContent = String(totalUnread); }
     });
 
+  // Search filter
   $("#chatSearch")?.addEventListener("input", (e) => {
     const q1 = e.target.value.toLowerCase();
     $$("#chatsScroll .chat-row").forEach((row) => {
@@ -222,11 +234,12 @@ const openNewChatPicker = async () => {
 // =========================================================================
 // 6. OPEN CHAT (DM by uid, or group by id)
 // =========================================================================
-const dmChatId = (a, b) => [a, b].sort().join("__");
+const dmChatId = (a, b) => [a, b].sort().join("__"); // deterministic doc id
 
 const openChatById = async (target) => {
   if (!target) return;
 
+  // Check if target is a group
   let isGroup = false;
   let chatId = null;
   let peer = null;
@@ -238,6 +251,7 @@ const openChatById = async (target) => {
     peer = await fetchUser(target);
     if (!peer) { toast("User not found"); return; }
     chatId = dmChatId(state.uid, peer.uid);
+    // Ensure my chat-meta exists
     const myChatRef = doc(db, "users", state.uid, "chats", chatId);
     const exists = (await getDoc(myChatRef)).exists();
     if (!exists) {
@@ -246,12 +260,14 @@ const openChatById = async (target) => {
         createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
       });
     }
+    // Reset unread for me
     await updateDoc(myChatRef, { unread: 0 });
   }
 
   state.activeChat = chatId;
   $("#chatsRoute")?.classList.add("is-open");
   renderChatView({ isGroup, chatId, peer, group: isGroup ? { id: groupSnap.id, ...groupSnap.data() } : null });
+  // Mark active in list
   $$("#chatsScroll .chat-row").forEach((r) => r.classList.remove("active"));
 };
 
@@ -267,9 +283,11 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
 
   const messagesPath = isGroup ? ["groups", chatId, "messages"] : ["chats", chatId, "messages"];
 
+  // Apply per-chat customization
   const cust = (state.me.chatCustomization || {})[chatId] || {};
   applyChatCustomization(view, cust);
 
+  // HEAD
   const head = el("div", { class: "chat-head" },
     el("button", { class: "icon-btn back", onclick: () => $("#chatsRoute").classList.remove("is-open") },
       el("i", { class: "ri-arrow-left-line" })),
@@ -295,23 +313,29 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
   );
   view.appendChild(head);
 
+  // MESSAGES
   const messages = el("div", { class: "messages", id: "messages" });
   view.appendChild(messages);
 
+  // BOTTOM BAR — one grid child wrapping all bottom UI (reply, attach preview, composer)
   const bottomBar = el("div", { class: "chat-bottom-bar", id: "chatBottomBar" });
 
+  // Reply preview (hidden until replying)
   const replyPreview = el("div", { class: "reply-preview hidden", id: "replyPreview" });
   bottomBar.appendChild(replyPreview);
 
+  // Attachment preview strip (hidden until file picked)
   const attachPreview = el("div", { class: "attach-preview hidden", id: "attachPreviewStrip" });
   bottomBar.appendChild(attachPreview);
 
+  // COMPOSER
   const composerField = el("div", { class: "field", id: "composerField", contenteditable: "true",
     "data-placeholder": "Message", spellcheck: "true" });
   composerField.addEventListener("input", () => {
     const hasText = composerField.textContent.trim().length > 0;
     const sendBtn = bottomBar.querySelector("#sendBtn");
     if (sendBtn) sendBtn.disabled = !hasText && !pendingAttachment;
+    // typing indicator
     if (!isGroup) {
       updateDoc(doc(db, "chats", chatId), { typing: { [state.uid]: serverTimestamp() } }, { merge: true }).catch(async () => {
         await setDoc(doc(db, "chats", chatId), { typing: { [state.uid]: serverTimestamp() } }, { merge: true });
@@ -339,12 +363,14 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
   bottomBar.appendChild(composer);
   view.appendChild(bottomBar);
 
+  // Restore draft
   const draft = localStorage.getItem(`orbit:draft:${chatId}`);
   if (draft) {
     composerField.innerText = draft;
     bottomBar.querySelector("#sendBtn").disabled = false;
   }
 
+  // Live messages listener
   if (state.chatUnsub) state.chatUnsub();
   state.chatUnsub = onSnapshot(
     query(collection(db, ...messagesPath), orderBy("createdAt", "asc"), limit(200)),
@@ -369,9 +395,6 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
     });
   }
 
-  // =========================================================================
-  // FIXED: Optimistic send — clear input & show bubble immediately
-  // =========================================================================
   async function send() {
     const field = $("#composerField");
     const text = field.innerText.trim();
@@ -379,41 +402,33 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
     const sendBtn = $("#sendBtn");
     sendBtn.disabled = true;
 
-    // Capture before clearing
-    const msgText = text;
-    const localAttachment = pendingAttachment;
-    const localReply = replyingTo ? { ...replyingTo } : null;
+    // Optimistic bubble — shows instantly with plain textContent (no entity issues)
+    const optReply = replyingTo ? { ...replyingTo } : null;
+    const optEl = _buildOptimisticRow(text, optReply);
+    const msgsRoot = $("#messages");
+    if (msgsRoot) { msgsRoot.appendChild(optEl); msgsRoot.scrollTop = msgsRoot.scrollHeight; }
 
-    // === Clear input and show optimistic bubble right away ===
     field.innerText = "";
     localStorage.removeItem(`orbit:draft:${chatId}`);
     clearReply();
-    pendingAttachment = null;
-    const strip = $("#attachPreviewStrip");
-    if (strip) { strip.innerHTML = ""; strip.classList.add("hidden"); }
-
-    const messagesEl = $("#messages");
-    if (messagesEl && (msgText || localAttachment)) {
-      const tempRow = _buildOptimisticRow(msgText, localReply, !!localAttachment);
-      messagesEl.appendChild(tempRow);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-    // ===
 
     try {
       let media = null;
-      if (localAttachment) {
+      if (pendingAttachment) {
         toast("Uploading…");
-        media = await uploadToCloudinary(localAttachment, localAttachment.type.startsWith("video") ? "video" : "image");
+        media = await uploadToCloudinary(pendingAttachment, pendingAttachment.type.startsWith("video") ? "video" : "image");
+        pendingAttachment = null;
+        const strip = $("#attachPreviewStrip");
+        if (strip) { strip.innerHTML = ""; strip.classList.add("hidden"); }
       }
 
       const msg = {
         authorUid: state.uid,
-        text: msgText || "",
+        text: text || "",
         media,
-        replyTo: localReply ? {
-          id: localReply.id, text: localReply.text || (localReply.media ? "[media]" : ""),
-          authorUid: localReply.authorUid, authorName: localReply.authorName || "",
+        replyTo: optReply ? {
+          id: optReply.id, text: optReply.text || (optReply.media ? "[media]" : ""),
+          authorUid: optReply.authorUid, authorName: optReply.authorName || "",
         } : null,
         reactions: {},
         readBy: [state.uid],
@@ -422,80 +437,45 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
       await addDoc(collection(db, ...messagesPath), msg);
 
       if (isGroup) {
-        await updateDoc(doc(db, "groups", chatId), { lastMessage: msgText || "[media]", lastMessageAt: serverTimestamp() });
+        await updateDoc(doc(db, "groups", chatId), { lastMessage: text || "[media]", lastMessageAt: serverTimestamp() });
       } else {
         const updateMeta = async (forUid, otherUid, isMe) => {
           const ref = doc(db, "users", forUid, "chats", chatId);
           const exists = (await getDoc(ref)).exists();
-          const data = {
-            peerUid: otherUid,
-            lastMessage: msgText || "[media]",
-            lastFromMe: isMe,
-            updatedAt: serverTimestamp(),
-          };
+          const data = { peerUid: otherUid, lastMessage: text || "[media]", lastFromMe: isMe, updatedAt: serverTimestamp() };
           if (!isMe) data.unread = increment(1);
           if (exists) await updateDoc(ref, data); else await setDoc(ref, { ...data, unread: isMe ? 0 : 1, createdAt: serverTimestamp() });
         };
-        await Promise.all([
-          updateMeta(state.uid, peer.uid, true),
-          updateMeta(peer.uid, state.uid, false),
-        ]);
+        await Promise.all([updateMeta(state.uid, peer.uid, true), updateMeta(peer.uid, state.uid, false)]);
         updateDoc(doc(db, "chats", chatId), { [`typing.${state.uid}`]: deleteField() }).catch(() => {});
+        // Notify recipient
+        writeNotif(peer.uid, "message", { text: (text || "[media]").slice(0, 60) }).catch(() => {});
       }
     } catch (err) {
-      // Remove optimistic bubble and restore input on failure
-      document.querySelector(".msg-row[data-optimistic='true']")?.remove();
-      field.innerText = msgText;
-      if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
+      optEl?.remove();
+      field.innerText = text;
       toast("Send failed: " + (err.message || "check Firebase config"));
     } finally {
-      const field2 = $("#composerField");
-      sendBtn.disabled = !field2?.textContent.trim() && !pendingAttachment;
+      const f2 = $("#composerField");
+      sendBtn.disabled = !f2?.textContent.trim() && !pendingAttachment;
     }
   }
+
+  function _buildOptimisticRow(msgText, replyTo) {
+    const bubble = el("div", { class: "bubble" });
+    if (replyTo) {
+      bubble.appendChild(el("div", { class: "reply-quote" },
+        el("div", { class: "q-name", text: replyTo.authorName || "User" }),
+        el("div", { text: (replyTo.text || "").slice(0, 120) || "[media]" }),
+      ));
+    }
+    if (msgText) { const t = el("span", {}); t.textContent = msgText; bubble.appendChild(t); }
+    const meta = el("span", { class: "meta" }); meta.textContent = "sending…";
+    bubble.appendChild(document.createTextNode(" ")); bubble.appendChild(meta);
+    const row = el("div", { class: "msg-row from-me optimistic" });
+    row.appendChild(bubble); return row;
+  }
 };
-
-// Build an optimistic (pending) message row shown before Firestore confirms
-function _buildOptimisticRow(text, replyTo, hasAttachment) {
-  const bubble = el("div", { class: "bubble" });
-
-  if (replyTo) {
-    bubble.appendChild(el("div", { class: "reply-quote" },
-      el("div", { class: "q-name" }, replyTo.authorName || "User"),
-      el("div", {}, (replyTo.text || "").slice(0, 120) || "[media]"),
-    ));
-  }
-
-  if (hasAttachment && !text) {
-    bubble.appendChild(el("span", { style: "opacity:.6;font-style:italic;" }, "Uploading…"));
-  }
-
-  if (text) {
-    const t = el("span", {});
-    t.innerHTML = text.replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
-    bubble.appendChild(t);
-  }
-
-  const meta = el("span", { class: "meta" });
-  meta.appendChild(document.createTextNode(
-    new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-  ));
-  // Clock icon = "sending" state (like WhatsApp)
-  meta.appendChild(el("span", {
-    class: "read",
-    html: '<i class="ri-time-line" style="opacity:.5;" title="Sending…"></i>',
-  }));
-  bubble.appendChild(document.createTextNode(" "));
-  bubble.appendChild(meta);
-
-  const row = el("div", {
-    class: "msg-row from-me",
-    data: { optimistic: "true" },
-    style: "opacity:0.78;",
-  });
-  row.appendChild(bubble);
-  return row;
-}
 
 // =========================================================================
 // 8. RENDER MESSAGES (with day dividers, bubbles, reactions, replies)
@@ -512,6 +492,7 @@ const renderMessages = async (root, snap, { isGroup, chatId, peer }) => {
   }
 
   const msgs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  // Resolve authors for groups
   const authorsNeeded = isGroup ? [...new Set(msgs.map((m) => m.authorUid).filter(Boolean))] : [];
   const authorMap = isGroup
     ? Object.fromEntries((await Promise.all(authorsNeeded.map(fetchUser))).filter(Boolean).map((u) => [u.uid, u]))
@@ -538,6 +519,7 @@ const renderMessages = async (root, snap, { isGroup, chatId, peer }) => {
     const author = authorMap[m.authorUid];
     const showAv = isGroup && !fromMe && lastAuthor !== m.authorUid;
 
+    // Mark as read by me
     if (!m.readBy?.includes(state.uid)) {
       const path = isGroup ? ["groups", chatId, "messages", m.id] : ["chats", chatId, "messages", m.id];
       updateDoc(doc(db, ...path), { readBy: arrayUnion(state.uid) }).catch(() => {});
@@ -573,6 +555,7 @@ const renderMessages = async (root, snap, { isGroup, chatId, peer }) => {
       bubble.appendChild(t);
     }
 
+    // meta (time, edited, status)
     const meta = el("span", { class: "meta" });
     if (m.editedAt) meta.appendChild(el("span", { class: "edited", text: "edited · " }));
     meta.appendChild(document.createTextNode(fmtTime(m.createdAt)));
@@ -583,6 +566,7 @@ const renderMessages = async (root, snap, { isGroup, chatId, peer }) => {
     bubble.appendChild(document.createTextNode(" "));
     bubble.appendChild(meta);
 
+    // Reactions
     if (m.reactions && Object.keys(m.reactions).length) {
       const counts = {};
       for (const emoji of Object.values(m.reactions)) counts[emoji] = (counts[emoji] || 0) + 1;
@@ -593,6 +577,7 @@ const renderMessages = async (root, snap, { isGroup, chatId, peer }) => {
       bubble.appendChild(rx);
     }
 
+    // Hover actions
     const actions = el("div", { class: "msg-actions" },
       el("button", { title: "React", onclick: (e) => openReactPicker(e, m, isGroup, chatId) }, el("i", { class: "ri-emotion-line" })),
       el("button", { title: "Reply", onclick: () => setReply(m, author?.name) }, el("i", { class: "ri-reply-line" })),
@@ -602,6 +587,7 @@ const renderMessages = async (root, snap, { isGroup, chatId, peer }) => {
     );
     bubble.appendChild(actions);
 
+    // Row
     const row = el("div", {
       class: `msg-row ${fromMe ? "from-me" : ""} ${!showAv && !fromMe ? "no-av" : ""}`,
       data: { id: m.id },
@@ -666,6 +652,7 @@ const deleteMessage = async (m, isGroup, chatId) => {
 
 const openReactPicker = (e, m, isGroup, chatId) => {
   e.stopPropagation();
+  // Close any existing
   $$(".react-picker").forEach((n) => n.remove());
   const quick = ["❤️", "😂", "😮", "😢", "👍", "🔥"];
   const picker = el("div", { class: "react-picker" });
@@ -712,6 +699,7 @@ const pickAttachment = (chatId) => {
     input.remove();
     if (!pendingAttachment) return;
 
+    // Show preview strip
     const strip = $("#attachPreviewStrip");
     if (strip) {
       strip.innerHTML = "";
@@ -743,6 +731,7 @@ const openCustomize = (chatId) => {
   const drawer = $("#chatCustomize");
   drawer.classList.remove("hidden");
 
+  // Populate
   const cust = (state.me.chatCustomization || {})[chatId] || {};
   const wpHost = $("#wallpapers");
   wpHost.innerHTML = "";
@@ -780,6 +769,7 @@ const saveCust = async (chatId, patch) => {
   const updated = { ...(state.me.chatCustomization || {}), [chatId]: merged };
   state.me.chatCustomization = updated;
   applyChatCustomization($("#chatView"), merged);
+  // re-render swatches active state
   if (patch.bubbleColor || patch.wallpaper || patch.shape || patch.font) openCustomize(chatId);
   await updateDoc(doc(db, "users", state.uid), { chatCustomization: updated }).catch(() => {});
 };
@@ -788,14 +778,18 @@ const applyChatCustomization = (view, cust) => {
   if (!view) return;
   const wp = WALLPAPERS.find((w) => w.id === (cust.wallpaper || "none"));
   view.style.setProperty("--chat-wallpaper", wp?.css || "");
-  view.style.setProperty("--bubble-bg-me", cust.bubbleColor || "linear-gradient(135deg, var(--grad-1), var(--grad-2))");
   view.style.setProperty("--bubble-size", (cust.size || 15) + "px");
   view.style.setProperty("--bubble-font", FONT_MAP[cust.font || "inter"]);
   view.dataset.shape = cust.shape || "rounded";
+  // Inject scoped <style> so bubble colour override wins regardless of sheet specificity
+  const bg = cust.bubbleColor || "linear-gradient(135deg, var(--grad-1), var(--grad-2))";
+  let st = view.querySelector("style.orbit-cust");
+  if (!st) { st = document.createElement("style"); st.className = "orbit-cust"; view.appendChild(st); }
+  st.textContent = `#chatView .from-me .bubble { background: ${bg} !important; }`;
 };
 
 // =========================================================================
-// 12. EXTRAS
+// 12. EXTRAS — search in chat, header menu, jump-to-message, peer live
 // =========================================================================
 const searchInChat = (chatId, isGroup) => {
   const q1 = prompt("Search messages")?.trim().toLowerCase();
@@ -842,6 +836,7 @@ const chatHeaderMenu = ({ isGroup, chatId, peer, group }) => {
     opts.push({ label: "Clear my history", action: async () => {
       if (!confirm("Clear this chat from your side?")) return;
       const qs = await getDocs(collection(db, "chats", chatId, "messages"));
+      // (Soft-clear: deletes each from server. For a true 'clear for me', a per-user clear timestamp would be used.)
       const ops = qs.docs.map((d) => deleteDoc(d.ref));
       await Promise.all(ops);
       toast("Cleared");

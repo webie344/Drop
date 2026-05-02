@@ -1,5 +1,8 @@
 // =========================================================================
-// Orbit — app.js  (FIXED: notifications, explore, profile tabs, edit modal)
+// Orbit — app.js
+// Firebase init + Auth + Cloudinary + Router + Feed + Reels + Groups +
+// Profile + Settings + Theme + Verified-by-location.
+// Chat + DM logic lives in chat.js (it imports state from this file).
 // =========================================================================
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
@@ -17,6 +20,8 @@ import {
 // =========================================================================
 // 1. CONFIG — REPLACE THESE BEFORE HOSTING
 // =========================================================================
+
+// Firebase: get from https://console.firebase.google.com → Project Settings → Your apps
 export const firebaseConfig = {
   apiKey: "AIzaSyC9jF-ocy6HjsVzWVVlAyXW-4aIFgA79-A",
     authDomain: "crypto-6517d.firebaseapp.com",
@@ -26,6 +31,9 @@ export const firebaseConfig = {
     appId: "1:60263975159:web:bd53dcaad86d6ed9592bf2"
 };
 
+// Cloudinary: get from https://cloudinary.com → Settings → Upload → Upload presets
+// 1) Create an UNSIGNED preset (recommended for client-side uploads)
+// 2) Put your cloud name + the preset name below
 export const cloudinaryConfig = {
   cloudName:    "ddtdqrh1b",
   uploadPreset: "profile-pictures",
@@ -38,14 +46,15 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
+// Globals shared with chat.js
 export const state = {
-  me: null,
-  uid: null,
-  chatsUnsub: null,
-  chatUnsub: null,
-  activeChat: null,
+  me: null,           // current user profile doc (from /users/{uid})
+  uid: null,          // current uid
+  chatsUnsub: null,   // unsubscribe for chats list listener
+  chatUnsub: null,    // unsubscribe for active chat messages listener
+  activeChat: null,   // currently open chat doc id
   cache: {
-    users: new Map(),
+    users: new Map(), // uid -> profile snapshot
   },
 };
 
@@ -145,10 +154,11 @@ export const uploadToCloudinary = async (file, kind = "image") => {
   const res = await fetch(url, { method: "POST", body: fd });
   if (!res.ok) throw new Error("Upload failed");
   const json = await res.json();
+  // Strip undefined fields — Firestore rejects them
   const out = { url: json.secure_url, publicId: json.public_id, type: kind };
   if (json.width)    out.width    = json.width;
   if (json.height)   out.height   = json.height;
-  if (json.duration) out.duration = json.duration;
+  if (json.duration) out.duration = json.duration; // only present for video
   return out;
 };
 
@@ -183,9 +193,9 @@ const ensureUserDoc = async (user, extras = {}) => {
       email: user.email || null,
       photoURL: user.photoURL || `https://api.dicebear.com/7.x/shapes/svg?seed=${user.uid}`,
       bio: "",
-      verified: false,
+      verified: false,                // becomes true after location grant
       verifiedAt: null,
-      location: null,
+      location: null,                 // { lat, lng, city }
       followers: [],
       following: [],
       themePref: "dark",
@@ -196,22 +206,9 @@ const ensureUserDoc = async (user, extras = {}) => {
     await setDoc(ref, profile);
     return profile;
   }
+  // mark online + lastSeen
   await updateDoc(ref, { online: true, lastSeen: serverTimestamp() });
   return { uid: user.uid, ...snap.data(), online: true };
-};
-
-// ── Notification helper — writes a notif doc for another user ──────────
-const writeNotif = async (toUid, type, data = {}) => {
-  if (!toUid || toUid === state.uid) return;
-  try {
-    await addDoc(collection(db, "notifications", toUid, "items"), {
-      type,
-      fromUid: state.uid,
-      ...data,
-      read: false,
-      createdAt: serverTimestamp(),
-    });
-  } catch {}
 };
 
 onAuthStateChanged(auth, async (user) => {
@@ -227,8 +224,9 @@ onAuthStateChanged(auth, async (user) => {
   startMyProfileListener();
   startNotifListener();
   startSuggestions();
-  router();
+  router(); // initial route
   watchOfflineOnUnload();
+  // Notify chat module
   document.dispatchEvent(new CustomEvent("orbit:auth-ready", { detail: state.me }));
 });
 
@@ -250,27 +248,6 @@ const startMyProfileListener = () => {
       $("#meAvatar").src = avatarFor(state.me);
     }
   });
-};
-
-// ── Real-time unread count for notification bell ───────────────────────
-let _notifUnsub = null;
-const startNotifListener = () => {
-  if (_notifUnsub) _notifUnsub();
-  _notifUnsub = onSnapshot(
-    query(
-      collection(db, "notifications", state.uid, "items"),
-      where("read", "==", false),
-      limit(99)
-    ),
-    (snap) => {
-      const count = snap.size;
-      const pill = document.getElementById("notifPill");
-      if (pill) {
-        pill.hidden = count === 0;
-        pill.textContent = count > 99 ? "99+" : String(count);
-      }
-    }
-  );
 };
 
 // Auth UI bindings
@@ -317,92 +294,58 @@ $("#signOutBtn").addEventListener("click", async () => {
 $("#themeToggle").addEventListener("click", toggleTheme);
 $("#themeAuthToggle")?.addEventListener("click", toggleTheme);
 
-// ── Notification bell — shows real follows / orbits / comments ─────────
+// -- Notification helpers --
+export const writeNotif = async (toUid, type, data = {}) => {
+  if (!toUid || toUid === state.uid) return;
+  try {
+    await addDoc(collection(db, "notifications", toUid, "items"), {
+      type, ...data, fromUid: state.uid,
+      fromName: state.me?.name || "", fromAvatar: state.me?.photoURL || "",
+      read: false, createdAt: serverTimestamp(),
+    });
+  } catch {}
+};
+let _notifUnsub = null;
+const startNotifListener = () => {
+  if (_notifUnsub) _notifUnsub();
+  _notifUnsub = onSnapshot(
+    query(collection(db, "notifications", state.uid, "items"), where("read", "==", false), limit(99)),
+    (snap) => { const pill = $("#notifPill"); if (!pill) return; const n = snap.size; pill.textContent = n > 99 ? "99+" : String(n); pill.hidden = n === 0; }, () => {}
+  );
+};
+// -- Notification bell --
 const toggleNotifPanel = () => {
   const existing = $("#notifPanel");
   if (existing) { existing.remove(); return; }
-
   const panel = el("div", { class: "notif-panel", id: "notifPanel" });
-  const head = el("div", { class: "np-head" },
-    el("span", { text: "Notifications" }),
-    el("button", { class: "icon-btn", style: "width:30px;height:30px;", onclick: () => panel.remove() },
-      el("i", { class: "ri-close-line" })),
-  );
-  panel.appendChild(head);
-
-  const list = el("div", { id: "notifList" });
-  list.appendChild(el("div", { class: "notif-empty" }, "Loading…"));
-  panel.appendChild(list);
-  document.body.appendChild(panel);
-
-  // Mark all unread → read when panel opens
-  getDocs(
-    query(collection(db, "notifications", state.uid, "items"), where("read", "==", false), limit(50))
-  ).then((snap) => {
-    snap.docs.forEach((d) => updateDoc(d.ref, { read: true }).catch(() => {}));
-    const pill = document.getElementById("notifPill");
-    if (pill) { pill.hidden = true; pill.textContent = "0"; }
-  }).catch(() => {});
-
-  // Load the 30 most recent notifications
-  const q = query(
-    collection(db, "notifications", state.uid, "items"),
-    orderBy("createdAt", "desc"),
-    limit(30)
-  );
-  getDocs(q).then(async (snap) => {
-    list.innerHTML = "";
-    if (snap.empty) {
-      list.appendChild(el("div", { class: "notif-empty" }, "No notifications yet — post something and interact!"));
-      return;
-    }
-    const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    const uids = [...new Set(items.map((n) => n.fromUid).filter(Boolean))];
-    const authors = await Promise.all(uids.map(fetchUser));
-    const authorMap = Object.fromEntries(authors.filter(Boolean).map((u) => [u.uid, u]));
-
-    let added = 0;
-    items.forEach((n) => {
-      const from = authorMap[n.fromUid];
-      let text = "", iconClass = "", iconColor = "", href = "#feed";
-
-      if (n.type === "orbit") {
-        iconClass = "ri-fire-fill"; iconColor = "var(--grad-2)";
-        text = `${from?.name || "Someone"} orbited your post${n.postText ? `: "${n.postText.slice(0, 40)}"` : ""}`;
-        if (n.postId) href = `#post/${n.postId}`;
-      } else if (n.type === "comment") {
-        iconClass = "ri-chat-1-fill"; iconColor = "var(--primary)";
-        text = `${from?.name || "Someone"} commented on your post${n.text ? `: "${n.text.slice(0, 40)}"` : ""}`;
-        if (n.postId) href = `#post/${n.postId}`;
-      } else if (n.type === "follow") {
-        iconClass = "ri-user-follow-fill"; iconColor = "var(--good)";
-        text = `${from?.name || "Someone"} started following you`;
-        if (n.fromUid) href = `#profile/${n.fromUid}`;
-      }
-      if (!text) return;
-
-      list.appendChild(el("div", {
-        class: "notif-item",
-        onclick: () => { location.hash = href; panel.remove(); },
-      },
-        el("img", { class: "avatar sm", src: avatarFor(from), style: "flex-shrink:0;" }),
-        el("div", { style: "flex:1;min-width:0;" },
-          el("div", { class: "ni-text" }, text),
-          el("div", { class: "ni-time" }, fmtTime(n.createdAt)),
-        ),
-        el("i", { class: iconClass, style: `color:${iconColor};font-size:18px;flex-shrink:0;` }),
-      ));
-      added++;
+  panel.appendChild(el("div", { class: "np-head" }, el("span", { text: "Notifications" }),
+    el("button", { class: "icon-btn", style: "width:30px;height:30px;", onclick: () => panel.remove() }, el("i", { class: "ri-close-line" }))));
+  getDocs(query(collection(db, "notifications", state.uid, "items"), orderBy("createdAt", "desc"), limit(30)))
+  .then((snap) => {
+    if (snap.empty) { panel.appendChild(el("div", { class: "notif-empty" }, "No notifications yet.")); return; }
+    const iconMap = { orbit:"ri-fire-fill", follow:"ri-user-follow-fill", message:"ri-chat-1-fill", comment:"ri-chat-4-fill", experience:"ri-sparkling-fill" };
+    const colMap  = { orbit:"var(--grad-2)", follow:"var(--primary)", message:"var(--good)", comment:"var(--grad-3)", experience:"var(--grad-1)" };
+    snap.docs.forEach((d) => {
+      const n = { id: d.id, ...d.data() };
+      const ic = iconMap[n.type] || "ri-notification-3-fill";
+      const co = colMap[n.type]  || "var(--primary)";
+      const txt = n.text || (n.fromName || "Someone") + " " + ({ orbit:"orbited your post", follow:"followed you", message:"sent you a message", experience:"replied to your experience" }[n.type] || "interacted");
+      const item = el("div", { class: "notif-item" + (n.read ? "" : " unread") },
+        el("i", { class: ic, style: "color:" + co + ";font-size:20px;flex-shrink:0;margin-top:2px;" }),
+        el("div", { style: "min-width:0;" }, el("div", { class: "ni-text" }, txt), el("div", { class: "ni-time" }, fmtTime(n.createdAt))),
+      );
+      item.addEventListener("click", () => {
+        updateDoc(doc(db, "notifications", state.uid, "items", n.id), { read: true }).catch(() => {});
+        panel.remove();
+        if (n.type === "message" && n.fromUid) location.hash = "#chats/" + n.fromUid;
+        else if (n.type === "follow"  && n.fromUid) location.hash = "#profile/" + n.fromUid;
+        else location.hash = "#feed";
+      });
+      panel.appendChild(item);
     });
-
-    if (added === 0) {
-      list.appendChild(el("div", { class: "notif-empty" }, "No notifications yet."));
-    }
-  }).catch(() => {
-    list.innerHTML = "";
-    list.appendChild(el("div", { class: "notif-empty" }, "Couldn't load notifications."));
-  });
-
+    snap.docs.filter((d) => !d.data().read).forEach((d) => updateDoc(doc(db, "notifications", state.uid, "items", d.id), { read: true }).catch(() => {}));
+  }).catch(() => panel.appendChild(el("div", { class: "notif-empty" }, "Could not load notifications.")));
+  document.body.appendChild(panel);
   setTimeout(() => document.addEventListener("click", function once(e) {
     if (!panel.contains(e.target) && e.target !== $("#notifBtn")) panel.remove();
     else document.addEventListener("click", once, { once: true });
@@ -415,6 +358,7 @@ $("#notifBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleNot
 // =========================================================================
 const routes = ["feed", "reels", "chats", "groups", "explore", "saved", "settings", "profile", "post", "profile-u"];
 
+// Track feed scroll so "back from post" returns to same position
 let _feedScrollY = 0;
 
 const router = () => {
@@ -425,6 +369,7 @@ const router = () => {
   $$(".nav-item, .bn").forEach((b) => b.classList.toggle("active", b.dataset.route === target));
 
   const content = $("#content");
+  // Save scroll before leaving feed
   if (content._currentRoute === "feed") {
     _feedScrollY = content.querySelector(".feed-wrap")?.parentElement?.scrollTop || 0;
   }
@@ -450,7 +395,6 @@ $$(".nav-item, .bn, .brand").forEach((b) => {
   b.addEventListener("click", () => { location.hash = "#" + b.dataset.route; });
 });
 $("#meBtn").addEventListener("click", () => { location.hash = "#profile"; });
-
 // ── Mobile sidebar overlay ──────────────────────────────────────
 const openMobileSidebar = () => {
   $("#sidebar").classList.add("is-open");
@@ -462,12 +406,13 @@ const closeMobileSidebar = () => {
 };
 $("#openSidebar")?.addEventListener("click", openMobileSidebar);
 $("#sidebarBackdrop").addEventListener("click", closeMobileSidebar);
+// Close sidebar when a nav item is tapped on mobile
 $$(".nav-item, .sidebar-foot .link").forEach((b) =>
   b.addEventListener("click", () => { if (window.innerWidth <= 640) closeMobileSidebar(); })
 );
 
 // =========================================================================
-// 8. FEED
+// 8. FEED — flat IG/FB style with separator lines + Trending lane
 // =========================================================================
 const renderFeed = (root, restoreScrollY = 0) => {
   const wrap = el("div", { class: "feed-wrap" });
@@ -478,6 +423,7 @@ const renderFeed = (root, restoreScrollY = 0) => {
   );
   wrap.appendChild(stub);
 
+  // Trending lane container (filled later)
   const trendingLane = el("div", { class: "trending-lane hidden" });
   trendingLane.appendChild(el("div", { class: "trending-head" },
     el("i", { class: "ri-fire-fill" }), "Trending in your orbit"
@@ -486,6 +432,7 @@ const renderFeed = (root, restoreScrollY = 0) => {
   trendingLane.appendChild(trendingScroller);
   wrap.appendChild(trendingLane);
 
+  // Posts container
   const list = el("div", { class: "feed-list" });
   list.appendChild(el("div", { class: "empty" },
     el("i", { class: "ri-loader-4-line" }),
@@ -508,9 +455,11 @@ const renderFeed = (root, restoreScrollY = 0) => {
     }
 
     const posts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    // resolve authors
     const authors = await Promise.all([...new Set(posts.map((p) => p.authorUid))].map(fetchUser));
     const byUid = Object.fromEntries(authors.filter(Boolean).map((u) => [u.uid, u]));
 
+    // Trending = top 5 by orbitCount with at least 3 orbits
     const trending = [...posts].filter((p) => (p.orbitCount || 0) >= 3)
       .sort((a, b) => (b.orbitCount || 0) - (a.orbitCount || 0)).slice(0, 5);
     if (trending.length) {
@@ -520,18 +469,35 @@ const renderFeed = (root, restoreScrollY = 0) => {
       trendingLane.classList.add("hidden");
     }
 
-    posts.forEach((p) => list.appendChild(renderPost(p, byUid[p.authorUid])));
+    let _inlineReels = [];
+    getDocs(query(collection(db, "reels"), orderBy("createdAt", "desc"), limit(6))).then((rs) => { _inlineReels = rs.docs.map((d) => ({ id: d.id, ...d.data() })); }).catch(() => {});
+    posts.forEach((p, idx) => {
+      list.appendChild(renderPost(p, byUid[p.authorUid]));
+      if ((idx + 1) % 5 === 0 && _inlineReels.length) { const _r = _inlineReels.shift(); if (_r) list.appendChild(renderFeedReelCard(_r)); }
+    });
 
+    // Restore scroll position after coming back from a post
     if (restoreScrollY > 0) {
       requestAnimationFrame(() => { root.scrollTop = restoreScrollY; restoreScrollY = 0; });
     }
   });
 
+  getDocs(query(collection(db, "experiences"), orderBy("createdAt", "desc"), limit(3))).then(async (snap) => {
+    if (snap.empty) return;
+    const _eb = el("div", { class: "exp-feed-banner" });
+    _eb.appendChild(el("div", { class: "exp-feed-head" }, el("i", { class: "ri-sparkling-line", style: "color:var(--grad-1);" }), el("span", {}, "Experiences"), el("button", { class: "btn sm ghost", onclick: () => openCompose("experience") }, "+ Share yours")));
+    const _sc = el("div", { class: "exp-feed-scroller" }); _eb.appendChild(_sc);
+    const _ea = await Promise.all(snap.docs.map((d) => fetchUser(d.data().authorUid)));
+    const _em = Object.fromEntries(_ea.filter(Boolean).map((u) => [u.uid, u]));
+    snap.docs.forEach((d) => { const ex = { id: d.id, ...d.data() }; _sc.appendChild(renderExperienceMiniCard(ex, _em[ex.authorUid])); });
+    wrap.insertBefore(_eb, list);
+  }).catch(() => {});
+  // store unsub on root so route changes clean up
   root._unsub = unsub;
 };
 
 const renderTrendingCard = (p, author) => {
-  return el("div", { class: "trending-card", onclick: () => location.hash = `#feed` },
+  return el("div", { class: "trending-card", onclick: () => location.hash = `#feed` /* stays; could open detail */ },
     el("div", { class: "t-head" },
       el("img", { class: "avatar xs", src: avatarFor(author) }),
       el("div", { class: "t-name" }, author?.name || "User"),
@@ -544,6 +510,7 @@ const renderTrendingCard = (p, author) => {
   );
 };
 
+// Build a media carousel node for an array of media objects (or single obj)
 const renderMediaCarousel = (mediaRaw) => {
   const items = Array.isArray(mediaRaw) ? mediaRaw : (mediaRaw ? [mediaRaw] : []);
   if (!items.length) return null;
@@ -555,6 +522,7 @@ const renderMediaCarousel = (mediaRaw) => {
     }
     return el("div", { class: "post-media" }, el("img", { src: m.url, loading: "lazy" }));
   }
+  // Multiple — simple slider
   let cur = 0;
   const slides = items.map((m, i) => {
     const slide = el("div", { class: "carousel-slide", style: i === 0 ? "" : "display:none;" });
@@ -615,15 +583,18 @@ const renderPost = (p, author, opts = {}) => {
   );
   post.appendChild(head);
 
+  if (p.location?.city || p.location?.lat) { post.appendChild(el("div", { class: "post-location-badge" }, el("i", { class: "ri-map-pin-fill" }), " " + (p.location.city || p.location.lat + ", " + p.location.lng))); }
   if (p.text) {
     const body = el("div", { class: "post-text", onclick: () => location.hash = `#post/${p.id}` });
     body.innerHTML = linkify(p.text);
     post.appendChild(body);
   }
 
+  // Media (single or carousel)
   const carousel = renderMediaCarousel(p.media);
   if (carousel) post.appendChild(carousel);
 
+  // Actions row
   const orbitIcon = el("i", { class: iOrbited ? "ri-fire-fill" : "ri-fire-line" });
   const orbitCount = el("span", { text: String(p.orbitCount || 0) });
   let _iOrbited = iOrbited;
@@ -637,10 +608,6 @@ const renderPost = (p, author, opts = {}) => {
       orbits: _iOrbited ? arrayUnion(state.uid) : arrayRemove(state.uid),
       orbitCount: increment(_iOrbited ? 1 : -1),
     }).catch(() => {});
-    // Write notification when orbiting someone else's post
-    if (_iOrbited && p.authorUid !== state.uid) {
-      writeNotif(p.authorUid, "orbit", { postId: p.id, postText: (p.text || "").slice(0, 60) });
-    }
   }}, orbitIcon, el("span", {}, "Orbit · "), orbitCount);
 
   const saveIcon = (state.me?.saved || []).includes(p.id) ? "ri-bookmark-fill" : "ri-bookmark-line";
@@ -667,6 +634,7 @@ const renderPost = (p, author, opts = {}) => {
   post.appendChild(actions);
 
   if (!hideComments) {
+    // Comments preview (top 2)
     const cBox = el("div", { class: "comments hidden" });
     post.appendChild(cBox);
 
@@ -685,10 +653,6 @@ const renderPost = (p, author, opts = {}) => {
         text, authorUid: state.uid, createdAt: serverTimestamp(),
       });
       await updateDoc(doc(db, "posts", p.id), { commentCount: increment(1) });
-      // Notify post author of new comment
-      if (p.authorUid !== state.uid) {
-        writeNotif(p.authorUid, "comment", { postId: p.id, text: text.slice(0, 60) });
-      }
     });
     post.appendChild(cForm);
 
@@ -719,7 +683,7 @@ const renderPost = (p, author, opts = {}) => {
 };
 
 // =========================================================================
-// 8b. POST DETAIL
+// 8b. POST DETAIL — full single post with all comments + back button
 // =========================================================================
 const renderPostDetail = async (root, postId) => {
   if (!postId) { location.hash = "#feed"; return; }
@@ -742,8 +706,10 @@ const renderPostDetail = async (root, postId) => {
   const p = { id: snap.id, ...snap.data() };
   const author = await fetchUser(p.authorUid);
 
+  // Render the post card (no inline comment form — we show all comments below)
   root.appendChild(renderPost(p, author, { hideComments: true }));
 
+  // Full comments section
   const cmtSection = el("div", { class: "detail-comments" });
   root.appendChild(cmtSection);
 
@@ -793,9 +759,6 @@ const renderPostDetail = async (root, postId) => {
       text, authorUid: state.uid, createdAt: serverTimestamp(),
     });
     await updateDoc(doc(db, "posts", p.id), { commentCount: increment(1) });
-    if (p.authorUid !== state.uid) {
-      writeNotif(p.authorUid, "comment", { postId: p.id, text: text.slice(0, 60) });
-    }
   });
   cmtSection.appendChild(cForm);
 };
@@ -808,7 +771,8 @@ const toggleSave = async (postId) => {
 };
 
 // =========================================================================
-// 9. REELS
+// 9. REELS — load once (no snapshot re-render), in-place DOM updates,
+//            TikTok-style comments slide-up, intersection autoplay
 // =========================================================================
 const renderReels = async (root) => {
   const wrap = el("div", { class: "reels-wrap" });
@@ -845,6 +809,7 @@ const renderReels = async (root) => {
   wrap.innerHTML = "";
   reels.forEach((r) => wrap.appendChild(renderReel(r, map[r.authorUid])));
 
+  // Intersection-observer autoplay (don't restart if already playing the same video)
   const io = new IntersectionObserver((entries) => {
     entries.forEach((e) => {
       const v = e.target;
@@ -856,6 +821,7 @@ const renderReels = async (root) => {
 };
 
 const renderReel = (r, author) => {
+  // Track liked state client-side to avoid re-render
   let liked = (r.likes || []).includes(state.uid);
   let likeCount = r.likeCount || 0;
   let commentCount = r.commentCount || 0;
@@ -912,7 +878,9 @@ const renderReel = (r, author) => {
   return node;
 };
 
+// TikTok-style slide-up comments for a reel
 const openReelComments = (reelId, cmtNumEl) => {
+  // Remove any existing
   $("#reelCommentsSheet")?.remove();
 
   const sheet = el("div", { class: "reel-cmt-sheet", id: "reelCommentsSheet" });
@@ -945,6 +913,7 @@ const openReelComments = (reelId, cmtNumEl) => {
   sheet.appendChild(inner);
   document.body.appendChild(sheet);
 
+  // Load comments live
   const listEl = inner.querySelector(`#reelCmtList_${reelId}`);
   const unsub = onSnapshot(
     query(collection(db, "reels", reelId, "comments"), orderBy("createdAt", "asc"), limit(100)),
@@ -994,6 +963,7 @@ const openReelComments = (reelId, cmtNumEl) => {
       listEl.scrollTop = listEl.scrollHeight;
     });
 
+  // Clean up listener when sheet is removed
   const mo = new MutationObserver(() => {
     if (!document.body.contains(sheet)) { unsub(); mo.disconnect(); }
   });
@@ -1075,7 +1045,7 @@ const renderGroups = (root) => {
 };
 
 // =========================================================================
-// 11. EXPLORE — FIXED: larger cards, text overlay on images
+// 11. EXPLORE / SAVED
 // =========================================================================
 const renderExplore = (root, hashtagFilter = null) => {
   const title = hashtagFilter ? `#${hashtagFilter}` : "Explore";
@@ -1087,11 +1057,10 @@ const renderExplore = (root, hashtagFilter = null) => {
     el("h2", {}, title),
   );
   root.appendChild(head);
-
-  // FIXED: use explore-grid (2-col larger cards) instead of grid-3
-  const grid = el("div", { class: "explore-grid" });
+  const grid = el("div", { class: "grid-3" });
   root.appendChild(grid);
 
+  // No compound orderBy on hashtag queries — sort client-side to avoid composite index
   const baseQ = hashtagFilter
     ? query(collection(db, "posts"), where("hashtags", "array-contains", hashtagFilter.toLowerCase()), limit(60))
     : query(collection(db, "posts"), orderBy("orbitCount", "desc"), limit(60));
@@ -1104,15 +1073,15 @@ const renderExplore = (root, hashtagFilter = null) => {
         el("div", { class: "t" }, hashtagFilter ? `No posts tagged #${hashtagFilter}` : "Nothing to explore yet")));
       return;
     }
+    // Client-side sort for hashtag queries (no compound index needed)
     const docs = [...snap.docs].sort((a, b) => {
       if (hashtagFilter) return (b.data().createdAt?.seconds || 0) - (a.data().createdAt?.seconds || 0);
       return (b.data().orbitCount || 0) - (a.data().orbitCount || 0);
     });
     docs.forEach((d) => {
       const p = { id: d.id, ...d.data() };
-      const cell = el("div", { class: "explore-cell", onclick: () => location.hash = `#post/${p.id}` });
+      const cell = el("div", { class: "cell", onclick: () => location.hash = `#post/${p.id}` });
       const mediaItems = Array.isArray(p.media) ? p.media : (p.media ? [p.media] : []);
-
       if (mediaItems.length) {
         const m = mediaItems[0];
         if (m.type === "video") {
@@ -1122,25 +1091,10 @@ const renderExplore = (root, hashtagFilter = null) => {
           cell.appendChild(el("img", { src: m.url, loading: "lazy" }));
           if (mediaItems.length > 1) cell.appendChild(el("span", { class: "cell-badge" }, el("i", { class: "ri-image-2-line" })));
         }
-        // FIXED: text overlay on top of the image
-        if (p.text) {
-          cell.appendChild(el("div", { class: "explore-cell-overlay" },
-            el("div", { class: "explore-cell-caption" }, p.text.slice(0, 100))
-          ));
-        }
       } else {
-        // Text-only posts: styled text card
-        cell.classList.add("explore-cell-text-only");
-        cell.appendChild(el("div", { class: "explore-text-card" }, p.text || ""));
+        cell.appendChild(el("div", { class: "cell-text", text: (p.text || "").slice(0, 80) }));
       }
-
-      // Orbit count badge
-      if ((p.orbitCount || 0) > 0) {
-        cell.appendChild(el("div", { class: "explore-orbit-badge" },
-          el("i", { class: "ri-fire-fill" }), String(p.orbitCount)
-        ));
-      }
-
+      if (p.text) cell.appendChild(el("div", { class: "cell-overlay", text: (p.text || "").slice(0, 55) }));
       grid.appendChild(cell);
     });
   });
@@ -1169,7 +1123,7 @@ const renderSaved = (root) => {
 };
 
 // =========================================================================
-// 12. PROFILE — FIXED: feed posts, portrait reels, real edit modal
+// 12. PROFILE
 // =========================================================================
 const renderProfile = async (root, uid) => {
   const u = await fetchUser(uid);
@@ -1180,21 +1134,8 @@ const renderProfile = async (root, uid) => {
   const isMe = uid === state.uid;
   const iFollow = (state.me.following || []).includes(uid);
 
-  // FIXED: avatar is clickable (with camera overlay) on own profile
-  const avatarNode = isMe
-    ? el("div", { class: "avatar-upload-wrap profile-avatar-wrap", title: "Change profile photo",
-        onclick: () => openProfileEditModal(),
-      },
-        el("img", { class: "avatar xl", src: avatarFor(u) }),
-        el("div", { class: "avatar-upload-overlay" },
-          el("i", { class: "ri-camera-line" }),
-          el("span", {}, "Edit"),
-        ),
-      )
-    : el("img", { class: "avatar xl", src: avatarFor(u) });
-
   root.appendChild(el("div", { class: "profile-head" },
-    avatarNode,
+    el("img", { class: "avatar xl", src: avatarFor(u) }),
     el("div", {},
       el("div", { class: "name-row" }, u.name,
         u.verified ? el("span", { class: "verified lg", title: "Location verified", html: '<i class="ri-check-line"></i>' }) : null),
@@ -1206,8 +1147,7 @@ const renderProfile = async (root, uid) => {
       u.bio ? el("div", { class: "bio", text: u.bio }) : null,
       el("div", { class: "profile-actions" },
         isMe
-          ? el("button", { class: "btn ghost", onclick: openProfileEditModal },
-              el("i", { class: "ri-edit-line" }), "Edit profile")
+          ? el("button", { class: "btn ghost", onclick: () => openProfileEditModal() }, el("i", { class: "ri-edit-line" }), "Edit profile")
           : el("button", { class: "btn primary", onclick: async () => {
               const meRef = doc(db, "users", state.uid);
               const themRef = doc(db, "users", uid);
@@ -1220,8 +1160,6 @@ const renderProfile = async (root, uid) => {
                 batch.update(themRef, { followers: arrayUnion(state.uid) });
               }
               await batch.commit();
-              // FIXED: write follow notification
-              if (!iFollow) writeNotif(uid, "follow", {});
               router();
             }}, iFollow ? "Following" : "Follow"),
         !isMe ? el("button", { class: "btn ghost", onclick: () => location.hash = `#chats/${uid}` },
@@ -1243,12 +1181,13 @@ const renderProfile = async (root, uid) => {
 
   const renderTab = async (which) => {
     body.innerHTML = "";
+    // Show loading state
     body.appendChild(el("div", { class: "empty" },
       el("i", { class: "ri-loader-4-line", style: "animation:spin 1s linear infinite;" }),
       el("div", { class: "t" }, "Loading…")));
 
     if (which === "posts") {
-      // FIXED: render full feed-style cards instead of grid thumbnails
+      // No orderBy — avoid composite index requirement; sort client-side
       const snap = await getDocs(
         query(collection(db, "posts"), where("authorUid", "==", uid), limit(60))
       ).catch(() => null);
@@ -1260,12 +1199,10 @@ const renderProfile = async (root, uid) => {
         .map((d) => ({ id: d.id, ...d.data() }))
         .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
 
-      const wrap = el("div", { class: "feed-wrap" });
-      body.appendChild(wrap);
-      posts.forEach((p) => wrap.appendChild(renderPost(p, u)));
-
+      const profFeed = el("div", { class: "profile-feed-list" }); body.appendChild(profFeed);
+      posts.forEach((p) => profFeed.appendChild(renderPost(p, u)));
     } else if (which === "reels") {
-      // FIXED: portrait grid with proper thumbnails instead of tiny squares
+      // No orderBy — avoid composite index requirement; sort client-side
       const snap = await getDocs(
         query(collection(db, "reels"), where("authorUid", "==", uid), limit(30))
       ).catch(() => null);
@@ -1277,18 +1214,14 @@ const renderProfile = async (root, uid) => {
         .map((d) => ({ id: d.id, ...d.data() }))
         .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
 
-      const grid = el("div", { class: "profile-reels-grid" });
-      body.appendChild(grid);
+      const grid = el("div", { class: "grid-3 portrait-grid" }); body.appendChild(grid);
       reels.forEach((r) => {
-        const cell = el("div", { class: "profile-reel-cell", onclick: () => location.hash = `#reels` });
-        cell.appendChild(el("video", { src: r.media?.url, muted: "", playsinline: "", preload: "metadata" }));
-        cell.appendChild(el("span", { class: "cell-badge" }, el("i", { class: "ri-play-fill" })));
-        if (r.caption) {
-          cell.appendChild(el("div", { class: "reel-cell-caption" }, r.caption.slice(0, 50)));
-        }
+        const cell = el("div", { class: "cell portrait-cell", onclick: () => location.hash = `#reels` },
+          el("video", { src: r.media?.url, muted: "", playsinline: "", preload: "metadata" }),
+          el("span", { class: "cell-badge" }, el("i", { class: "ri-play-fill" })),
+        );
         grid.appendChild(cell);
       });
-
     } else {
       body.appendChild(el("div", { class: "settings" },
         el("div", { class: "group" },
@@ -1307,19 +1240,13 @@ const renderProfile = async (root, uid) => {
   }));
 };
 
-// ── FIXED: Real profile edit modal (replaces prompt-based version) ─────
 const openProfileEditModal = () => {
-  const modal = document.getElementById("profileEditModal");
-  if (!modal) return;
-  const nameInput  = document.getElementById("editName");
-  const unameInput = document.getElementById("editUsername");
-  const bioInput   = document.getElementById("editBio");
-  const avatarImg  = document.getElementById("editAvatar");
-  if (nameInput)  nameInput.value  = state.me.name     || "";
-  if (unameInput) unameInput.value = state.me.username || "";
-  if (bioInput)   bioInput.value   = state.me.bio      || "";
-  if (avatarImg)  avatarImg.src    = avatarFor(state.me);
-  modal.classList.remove("hidden");
+  const modal = document.getElementById("profileEditModal"); if (!modal) return;
+  const ni = document.getElementById("editName");    if (ni) ni.value = state.me.name || "";
+  const ui = document.getElementById("editUsername"); if (ui) ui.value = state.me.username || "";
+  const bi = document.getElementById("editBio");      if (bi) bi.value = state.me.bio || "";
+  const av = document.getElementById("editAvatar");   if (av) av.src = state.me.photoURL || avatarFor(state.me);
+  modal.style.display = "flex";
 };
 
 const renderProfileByUsername = async (root, username) => {
@@ -1334,7 +1261,7 @@ const renderProfileByUsername = async (root, username) => {
 };
 
 // =========================================================================
-// 13. SETTINGS
+// 13. SETTINGS — theme, verification, notifications
 // =========================================================================
 const renderSettings = (root) => {
   const wrap = el("div", { class: "settings" },
@@ -1392,11 +1319,6 @@ const renderSettings = (root) => {
       el("div", { class: "row" }, el("div", { class: "label" }, el("div", { class: "t" }, "Email"), el("div", { class: "d" }, state.me.email || "—"))),
       el("div", { class: "row" }, el("div", { class: "label" }, el("div", { class: "t" }, "Username"), el("div", { class: "d" }, "@" + state.me.username))),
       el("div", { class: "row" },
-        el("div", { class: "label" }, el("div", { class: "t" }, "Edit profile"), el("div", { class: "d" }, "Change your name, username, bio, and photo.")),
-        el("button", { class: "btn ghost", onclick: openProfileEditModal },
-          el("i", { class: "ri-edit-line" }), "Edit"),
-      ),
-      el("div", { class: "row" },
         el("div", { class: "label" }, el("div", { class: "t" }, "Sign out"), el("div", { class: "d" }, "End your session on this device.")),
         el("button", { class: "btn ghost", onclick: () => $("#signOutBtn").click() }, "Sign out"),
       ),
@@ -1415,6 +1337,7 @@ const renderSettings = (root) => {
   root.appendChild(wrap);
 };
 
+// Verification by location (one-time geolocation)
 const requestLocationVerification = () => {
   if (!("geolocation" in navigator)) { toast("Location not available on this device"); return; }
   toast("Requesting location…");
@@ -1439,7 +1362,7 @@ const requestLocationVerification = () => {
 };
 
 // =========================================================================
-// 14. COMPOSE MODAL
+// 14. COMPOSE MODAL — posts, reels, groups
 // =========================================================================
 const composeModal = $("#composeModal");
 const openCompose = (which = "post") => {
@@ -1460,6 +1383,7 @@ document.addEventListener("click", (e) => {
   }
 });
 
+// Post media — up to 3 files (images or one video)
 let postFiles = [];
 const MAX_POST_FILES = 3;
 
@@ -1485,6 +1409,21 @@ const refreshPostPreviews = () => {
   if (countEl) countEl.textContent = postFiles.length ? `${postFiles.length}/${MAX_POST_FILES} file${postFiles.length > 1 ? "s" : ""}` : "";
 };
 
+let _postLocation = null;
+document.getElementById("postLocationBtn")?.addEventListener("click", () => {
+  if (!("geolocation" in navigator)) { toast("Location not available"); return; }
+  const btn = document.getElementById("postLocationBtn");
+  btn.innerHTML = '<i class="ri-loader-4-line" style="animation:spin 1s linear infinite;"></i>';
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    const { latitude: lat, longitude: lng } = pos.coords; let city = null;
+    try { const r = await fetch("https://nominatim.openstreetmap.org/reverse?format=json&lat=" + lat + "&lon=" + lng + "&zoom=10"); const j = await r.json(); city = j.address?.city || j.address?.town || j.address?.state || (j.display_name || "").split(",")[0] || null; } catch {}
+    _postLocation = { lat: Math.round(lat * 100) / 100, lng: Math.round(lng * 100) / 100, city };
+    const tag = document.getElementById("postLocationTag"); if (tag) { tag.textContent = city || "My location"; tag.style.display = ""; }
+    btn.innerHTML = '<i class="ri-map-pin-fill" style="color:var(--primary);"></i>';
+    toast("Tagged: " + (city || "your location"));
+  }, () => { toast("Location access denied"); btn.innerHTML = '<i class="ri-map-pin-line"></i>'; }, { timeout: 8000 });
+});
+
 $("#postPickMedia").addEventListener("click", () => {
   if (postFiles.length >= MAX_POST_FILES) { toast(`Max ${MAX_POST_FILES} files per post`); return; }
   $("#postMedia").click();
@@ -1493,6 +1432,7 @@ $("#postMedia").addEventListener("change", (e) => {
   const files = Array.from(e.target.files || []);
   for (const file of files) {
     if (postFiles.length >= MAX_POST_FILES) break;
+    // Only allow 1 video
     if (file.type.startsWith("video/") && postFiles.some((f) => f.type.startsWith("video/"))) {
       toast("Only one video per post"); continue;
     }
@@ -1520,16 +1460,13 @@ $("#postForm").addEventListener("submit", async (e) => {
         uploadToCloudinary(f, f.type.startsWith("video/") ? "video" : "image")));
     }
     const hashtags = extractHashtags(text);
-    await addDoc(collection(db, "posts"), {
-      authorUid: state.uid, text, media,
-      hashtags,
-      orbits: [], orbitCount: 0, commentCount: 0,
-      createdAt: serverTimestamp(),
-    });
-    e.target.reset();
-    postFiles = []; refreshPostPreviews();
-    composeModal.classList.add("hidden");
-    toast("Posted!");
+    const _pd = { authorUid: state.uid, text, media, hashtags, orbits: [], orbitCount: 0, commentCount: 0, createdAt: serverTimestamp() };
+    if (_postLocation) { _pd.location = _postLocation; _postLocation = null; }
+    await addDoc(collection(db, "posts"), _pd);
+    e.target.reset(); postFiles = []; refreshPostPreviews();
+    const _lt = document.getElementById("postLocationTag"); if (_lt) { _lt.style.display = "none"; _lt.textContent = ""; }
+    const _lb = document.getElementById("postLocationBtn"); if (_lb) _lb.innerHTML = '<i class="ri-map-pin-line"></i>';
+    composeModal.classList.add("hidden"); toast("Posted!");
   } catch (err) {
     toast("Failed to post: " + (err.message || "unknown error"));
   } finally {
@@ -1547,11 +1484,9 @@ $("#reelForm").addEventListener("submit", async (e) => {
     toast("Uploading reel…");
     const media = await uploadToCloudinary(file, "video");
     const capEl = e.target.querySelector("input[name='caption']");
-    await addDoc(collection(db, "reels"), {
-      authorUid: state.uid, caption: (capEl?.value || "").trim(), media,
-      likes: [], likeCount: 0, commentCount: 0,
-      createdAt: serverTimestamp(),
-    });
+    const _rd = { authorUid: state.uid, caption: (capEl?.value || "").trim(), media, likes: [], likeCount: 0, commentCount: 0, createdAt: serverTimestamp() };
+    if (_selectedTrack) { _rd.music = { name: _selectedTrack.name, url: _selectedTrack.url }; _selectedTrack = null; }
+    await addDoc(collection(db, "reels"), _rd);
     e.target.reset();
     composeModal.classList.add("hidden");
     toast("Reel uploaded!");
@@ -1596,9 +1531,148 @@ $("#groupForm").addEventListener("submit", async (e) => {
 });
 
 // =========================================================================
+// FEED REEL CARD
+// =========================================================================
+const renderFeedReelCard = (reel) => {
+  const card = el("div", { class: "feed-reel-card" });
+  const vid = el("video", { src: reel.media?.url, muted: "", playsinline: "", loop: "", style: "width:100%;height:240px;object-fit:cover;cursor:pointer;display:block;" });
+  card.appendChild(el("div", { class: "frc-label" }, el("i", { class: "ri-film-fill" }), " Reels for you"));
+  card.appendChild(vid);
+  if (reel.caption) card.appendChild(el("div", { class: "frc-caption", text: reel.caption.slice(0, 80) }));
+  card.appendChild(el("div", { class: "frc-actions" }, el("button", { class: "btn ghost", style: "font-size:13px;gap:6px;", onclick: () => location.hash = "#reels" }, el("i", { class: "ri-play-circle-line" }), "Watch more reels")));
+  vid.addEventListener("click", () => vid.paused ? vid.play() : vid.pause());
+  new IntersectionObserver((en) => en.forEach((e) => e.isIntersecting ? vid.play().catch(()=>{}) : vid.pause()), { threshold: 0.5 }).observe(vid);
+  return card;
+};
+// =========================================================================
+// EXPERIENCE MINI CARD
+// =========================================================================
+const renderExperienceMiniCard = (ex, author) => {
+  const cc = { travel:"#5cd3ff",food:"#ff8a5a",adventure:"#3fdca0",music:"#ff5cae",fitness:"#ffb04a",art:"#7c5cff",tech:"#4ab8ff",life:"#ff5cae" };
+  return el("div", { class: "exp-mini-card", onclick: () => openExperienceThread(ex) },
+    el("div", { class: "exp-mini-cat", style: "background:" + (cc[ex.category] || "var(--primary)") + ";" }, ex.category || "experience"),
+    el("div", { class: "exp-mini-title", text: ex.title || "Experience" }),
+    el("div", { class: "exp-mini-author" }, el("img", { class: "avatar xs", src: avatarFor(author) }), el("span", {}, author?.name || "User")),
+    ex.replyCount ? el("div", { class: "exp-mini-replies" }, el("i", { class: "ri-reply-fill" }), " " + ex.replyCount + " replies") : null,
+  );
+};
+// =========================================================================
+// EXPERIENCE THREAD
+// =========================================================================
+const openExperienceThread = async (ex) => {
+  const overlay = el("div", { class: "exp-thread-overlay" });
+  const sheet   = el("div", { class: "exp-thread-sheet" });
+  sheet.appendChild(el("button", { class: "icon-btn exp-close-btn", onclick: () => overlay.remove() }, el("i", { class: "ri-close-line" })));
+  sheet.appendChild(await buildExperienceCard(ex));
+  sheet.appendChild(el("div", { class: "exp-replies-head" }, el("span", {}, "Replies"),
+    el("button", { class: "btn primary", style: "padding:6px 14px;font-size:13px;", onclick: () => { overlay.remove(); _replyToExpId = ex.id; openCompose("experience"); } }, el("i", { class: "ri-sparkling-line" }), "Share yours")));
+  const carousel = el("div", { class: "exp-replies-carousel" }); sheet.appendChild(carousel);
+  getDocs(query(collection(db, "experiences", ex.id, "replies"), orderBy("createdAt", "desc"), limit(20))).then(async (snap) => {
+    if (snap.empty) { carousel.appendChild(el("div", { class: "exp-empty-replies" }, "Be the first to reply!")); return; }
+    const ras = await Promise.all(snap.docs.map((d) => fetchUser(d.data().authorUid)));
+    const rm  = Object.fromEntries(ras.filter(Boolean).map((u) => [u.uid, u]));
+    for (const d of snap.docs) carousel.appendChild(await buildExperienceCard({ id: d.id, ...d.data() }, rm[d.data().authorUid], true));
+  }).catch(() => {});
+  overlay.appendChild(sheet);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+};
+let _replyToExpId = null;
+const buildExperienceCard = async (ex, authorPre = null, compact = false) => {
+  const author = authorPre || await fetchUser(ex.authorUid);
+  const cc = { travel:"#5cd3ff",food:"#ff8a5a",adventure:"#3fdca0",music:"#ff5cae",fitness:"#ffb04a",art:"#7c5cff",tech:"#4ab8ff",life:"#ff5cae" };
+  const card = el("div", { class: "exp-card" + (compact ? " compact" : "") });
+  if (ex.imageUrl) card.appendChild(el("img", { src: ex.imageUrl, class: "exp-card-img", loading: "lazy" }));
+  card.appendChild(el("div", { class: "exp-cat-tag", style: "background:" + (cc[ex.category] || "var(--primary)") + ";" }, ex.category || "experience"));
+  card.appendChild(el("div", { class: "exp-card-title", text: ex.title || "" }));
+  if (ex.description) card.appendChild(el("div", { class: "exp-card-desc", text: ex.description.slice(0, 200) }));
+  if (ex.location?.city) card.appendChild(el("div", { class: "post-location-badge" }, el("i", { class: "ri-map-pin-fill" }), " " + ex.location.city));
+  card.appendChild(el("div", { class: "exp-card-author" }, el("img", { class: "avatar xs", src: avatarFor(author) }), el("span", { class: "exp-author-name" }, author?.name || "User"), el("span", { class: "exp-author-time" }, fmtTime(ex.createdAt))));
+  return card;
+};
+// =========================================================================
+// EXPERIENCE FORM
+// =========================================================================
+let _expLocation = null, _expMediaFile = null;
+document.getElementById("expLocationBtn")?.addEventListener("click", () => {
+  if (!("geolocation" in navigator)) { toast("Location not available"); return; }
+  const btn = document.getElementById("expLocationBtn");
+  btn.innerHTML = '<i class="ri-loader-4-line" style="animation:spin 1s linear infinite;"></i>';
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    const { latitude: lat, longitude: lng } = pos.coords; let city = null;
+    try { const r = await fetch("https://nominatim.openstreetmap.org/reverse?format=json&lat=" + lat + "&lon=" + lng + "&zoom=10"); const j = await r.json(); city = j.address?.city || j.address?.town || j.address?.state || (j.display_name || "").split(",")[0] || null; } catch {}
+    _expLocation = { lat: Math.round(lat * 100) / 100, lng: Math.round(lng * 100) / 100, city };
+    const tag = document.getElementById("expLocationTag"); if (tag) { tag.textContent = city || "My location"; tag.style.display = ""; }
+    btn.innerHTML = '<i class="ri-map-pin-fill" style="color:var(--primary);"></i>';
+    toast("Tagged: " + (city || "your location"));
+  }, () => { toast("Location access denied"); btn.innerHTML = '<i class="ri-map-pin-line"></i>'; }, { timeout: 8000 });
+});
+document.getElementById("expPickMedia")?.addEventListener("click", () => document.getElementById("expMedia")?.click());
+document.getElementById("expMedia")?.addEventListener("change", (e) => { _expMediaFile = e.target.files?.[0] || null; const lbl = document.getElementById("expMediaLabel"); if (lbl) lbl.textContent = _expMediaFile ? _expMediaFile.name : ""; });
+document.getElementById("experienceForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const title = (document.getElementById("expTitle")?.value || "").trim();
+  const desc  = (document.getElementById("expDesc")?.value  || "").trim();
+  const cat   = document.getElementById("expCategory")?.value || "life";
+  if (!title) { toast("Give your experience a title"); return; }
+  const btn = e.target.querySelector("button[type=submit]"); btn.disabled = true;
+  try {
+    let imageUrl = null;
+    if (_expMediaFile) { toast("Uploading..."); const up = await uploadToCloudinary(_expMediaFile, _expMediaFile.type.startsWith("video") ? "video" : "image"); imageUrl = up.url; }
+    const data = { authorUid: state.uid, title, description: desc, category: cat, imageUrl, location: _expLocation || null, replyCount: 0, createdAt: serverTimestamp() };
+    if (_replyToExpId) { await addDoc(collection(db, "experiences", _replyToExpId, "replies"), data); await updateDoc(doc(db, "experiences", _replyToExpId), { replyCount: increment(1) }); _replyToExpId = null; }
+    else await addDoc(collection(db, "experiences"), data);
+    e.target.reset(); _expLocation = null; _expMediaFile = null;
+    const t2 = document.getElementById("expLocationTag"); if (t2) { t2.style.display = "none"; t2.textContent = ""; }
+    const l2 = document.getElementById("expMediaLabel"); if (l2) l2.textContent = "";
+    composeModal.classList.add("hidden"); toast("Experience shared!"); router();
+  } catch (err) { toast("Failed: " + (err.message || "unknown")); }
+  finally { btn.disabled = false; }
+});
+// =========================================================================
+// MUSIC TRACKS (free — SoundHelix)
+// =========================================================================
+const MUSIC_TRACKS = [
+  { id:"1",  name:"Upbeat Pop",       url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" },
+  { id:"2",  name:"Chill Electronic", url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3" },
+  { id:"3",  name:"Ambient Dreams",   url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3" },
+  { id:"4",  name:"Jazz Vibes",       url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3" },
+  { id:"5",  name:"Energetic Rock",   url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3" },
+  { id:"6",  name:"Smooth RnB",       url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3" },
+  { id:"7",  name:"Epic Cinematic",   url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3" },
+  { id:"8",  name:"Lo-fi Study",      url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3" },
+  { id:"9",  name:"Dance Floor",      url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-9.mp3" },
+  { id:"10", name:"Acoustic Folk",    url:"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3" },
+];
+let _selectedTrack = null;
+document.getElementById("openMusicPicker")?.addEventListener("click", () => {
+  const list = document.getElementById("musicTrackList"); if (!list) return;
+  list.classList.toggle("hidden");
+  if (!list.classList.contains("hidden") && !list.childElementCount) {
+    MUSIC_TRACKS.forEach((t) => {
+      const row = el("div", { class: "music-track-row" + (_selectedTrack?.id === t.id ? " active" : "") }, el("i", { class: "ri-music-2-line" }), el("div", { class: "mtr-info" }, el("div", { class: "mtr-name" }, t.name), el("div", { class: "mtr-artist" }, "Free music")));
+      row.addEventListener("click", () => {
+        _selectedTrack = t;
+        document.querySelectorAll(".music-track-row").forEach((r) => r.classList.remove("active")); row.classList.add("active");
+        const lbl = document.getElementById("musicPickerLabel"); if (lbl) lbl.textContent = t.name;
+        const clr = document.getElementById("clearMusicBtn"); if (clr) clr.classList.remove("hidden");
+        list.classList.add("hidden"); toast("Music: " + t.name);
+      });
+      list.appendChild(row);
+    });
+  }
+});
+document.getElementById("clearMusicBtn")?.addEventListener("click", () => {
+  _selectedTrack = null;
+  const lbl = document.getElementById("musicPickerLabel"); if (lbl) lbl.textContent = "Add music";
+  document.getElementById("clearMusicBtn")?.classList.add("hidden");
+  document.querySelectorAll(".music-track-row").forEach((r) => r.classList.remove("active"));
+});
+// =========================================================================
 // 15. SUGGESTIONS + TRENDING right rail
 // =========================================================================
 const startSuggestions = () => {
+  // Suggested users (latest accounts I don't follow)
   onSnapshot(query(collection(db, "users"), orderBy("createdAt", "desc"), limit(8)), (snap) => {
     const list = $("#suggestList"); if (!list) return;
     list.innerHTML = "";
@@ -1625,12 +1699,12 @@ const startSuggestions = () => {
             batch.update(themRef, { followers: arrayUnion(state.uid) });
           }
           await batch.commit();
-          if (!iFollow) writeNotif(u.uid, "follow", {});
         }}, iFollow ? "Following" : "Follow"),
       ));
     });
   });
 
+  // Trending posts
   onSnapshot(query(collection(db, "posts"), orderBy("orbitCount", "desc"), limit(5)), (snap) => {
     const list = $("#trendList"); if (!list) return;
     list.innerHTML = "";
@@ -1644,6 +1718,7 @@ const startSuggestions = () => {
   });
 };
 
+// Search
 $("#globalSearch").addEventListener("keydown", async (e) => {
   if (e.key !== "Enter") return;
   const q1 = e.target.value.trim().toLowerCase().replace(/^@/, "");
@@ -1654,79 +1729,38 @@ $("#globalSearch").addEventListener("keydown", async (e) => {
 });
 
 // =========================================================================
-// 16. PROFILE EDIT MODAL — event listeners (set up once, always in DOM)
+// 15b. PROFILE EDIT MODAL
 // =========================================================================
 (() => {
-  const modal       = document.getElementById("profileEditModal");
-  const closeBtn    = document.getElementById("profileEditClose");
-  const cancelBtn   = document.getElementById("editProfileCancel");
-  const saveBtn     = document.getElementById("editProfileSave");
-  const avatarWrap  = document.getElementById("editAvatarWrap");
-  const avatarInput = document.getElementById("editAvatarInput");
-
-  const closeModal = () => modal?.classList.add("hidden");
-
-  closeBtn?.addEventListener("click", closeModal);
-  cancelBtn?.addEventListener("click", closeModal);
-
-  // Close on backdrop click
-  modal?.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
-
-  // Profile photo upload
-  avatarWrap?.addEventListener("click", () => avatarInput?.click());
-  avatarInput?.addEventListener("change", async () => {
-    const file = avatarInput.files[0];
-    if (!file) return;
-    const avatarImg = document.getElementById("editAvatar");
-    // Instant local preview
-    if (avatarImg) avatarImg.src = URL.createObjectURL(file);
-    toast("Uploading photo…");
+  const modal = document.getElementById("profileEditModal");
+  const save  = document.getElementById("editProfileSave");
+  if (!modal || !save) return;
+  let pendingAvFile = null;
+  const closeModal = () => { modal.style.display = "none"; pendingAvFile = null; };
+  document.getElementById("profileEditClose")?.addEventListener("click", closeModal);
+  document.getElementById("editProfileCancel")?.addEventListener("click", closeModal);
+  modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+  document.getElementById("editAvatarWrap")?.addEventListener("click", () => document.getElementById("editAvatarInput")?.click());
+  document.getElementById("editAvatarInput")?.addEventListener("change", (e) => { const f = e.target.files?.[0]; if (!f) return; pendingAvFile = f; const av = document.getElementById("editAvatar"); if (av) av.src = URL.createObjectURL(f); });
+  save.addEventListener("click", async () => {
+    const nameV = (document.getElementById("editName")?.value || "").trim();
+    const userV = (document.getElementById("editUsername")?.value || "").trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
+    const bioV  = (document.getElementById("editBio")?.value || "").trim();
+    if (!nameV) { toast("Name cannot be empty"); return; }
+    const st = document.getElementById("editSaveText"); if (st) st.textContent = "Saving..."; save.disabled = true;
     try {
-      const result = await uploadToCloudinary(file, "image");
-      await updateDoc(doc(db, "users", state.uid), { photoURL: result.url });
-      state.me.photoURL = result.url;
-      state.cache.users.delete(state.uid);
-      document.getElementById("meAvatar").src = result.url;
-      if (avatarImg) avatarImg.src = result.url;
-      toast("Profile photo updated!");
-    } catch (err) {
-      toast("Photo upload failed");
-      if (avatarImg) avatarImg.src = avatarFor(state.me);
-    }
-    avatarInput.value = "";
-  });
-
-  // Save name / username / bio
-  saveBtn?.addEventListener("click", async () => {
-    const name     = (document.getElementById("editName")?.value     || "").trim();
-    const username = (document.getElementById("editUsername")?.value || "").trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
-    const bio      = (document.getElementById("editBio")?.value      || "").trim();
-
-    if (!name)               { toast("Name is required"); return; }
-    if (username.length < 3) { toast("Username must be at least 3 characters"); return; }
-
-    saveBtn.disabled = true;
-    saveBtn.textContent = "Saving…";
-    try {
-      await updateDoc(doc(db, "users", state.uid), { name, username, bio });
-      state.me.name = name;
-      state.me.username = username;
-      state.me.bio = bio;
-      state.cache.users.delete(state.uid);
-      toast("Profile updated!");
-      closeModal();
-      router();
-    } catch (err) {
-      toast("Update failed — " + (err.message || "try again"));
-    } finally {
-      saveBtn.disabled = false;
-      saveBtn.innerHTML = '<i class="ri-save-line"></i> Save changes';
-    }
+      const updates = { name: nameV, bio: bioV, username: userV || state.me.username };
+      if (pendingAvFile) { toast("Uploading photo..."); const up = await uploadToCloudinary(pendingAvFile, "image"); updates.photoURL = up.url; }
+      await updateDoc(doc(db, "users", state.uid), updates);
+      toast("Profile updated"); closeModal(); router();
+    } catch (err) { toast("Save failed: " + (err.message || "unknown")); }
+    finally { save.disabled = false; if (st) st.textContent = "Save changes"; }
   });
 })();
 
 // =========================================================================
-// 17. INIT
+// 16. INIT
 // =========================================================================
 initTheme();
+// Hide boot once auth state resolved (handled in onAuthStateChanged)
 setTimeout(() => $("#boot").classList.add("hidden"), 1200);

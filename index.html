@@ -106,10 +106,7 @@
         </div>
         <div class="topbar-right">
           <button class="icon-btn" id="themeToggle" aria-label="toggle theme"><i class="ri-sun-line"></i></button>
-          <button class="icon-btn" id="notifBtn" aria-label="notifications" style="position:relative;">
-            <i class="ri-notification-3-line"></i>
-            <span id="notifPill" hidden>0</span>
-          </button>
+          <button class="icon-btn" id="notifBtn" aria-label="notifications"><i class="ri-notification-3-line"></i><span class="pill" id="notifPill" hidden>0</span></button>
           <button class="avatar-btn" id="meBtn" aria-label="profile"><img id="meAvatar" alt="me"/></button>
         </div>
       </header>
@@ -175,6 +172,7 @@
         <div class="compose-tabs">
           <button class="ct active" data-ctab="post"><i class="ri-image-line"></i> Post</button>
           <button class="ct" data-ctab="reel"><i class="ri-film-line"></i> Reel</button>
+          <button class="ct" data-ctab="experience"><i class="ri-sparkling-line"></i> Experience</button>
           <button class="ct" data-ctab="group"><i class="ri-group-2-line"></i> Group</button>
         </div>
 
@@ -186,6 +184,10 @@
             <button type="button" class="icon-btn" id="postPickMedia" title="Add up to 3 images or 1 video">
               <i class="ri-image-add-line"></i>
             </button>
+            <button type="button" class="icon-btn" id="postLocationBtn" title="Tag your location">
+              <i class="ri-map-pin-line"></i>
+            </button>
+            <span id="postLocationTag" style="font-size:12px;color:var(--primary);display:none;"></span>
             <span id="postFileCount" style="font-size:12px;color:var(--text-mute);"></span>
             <button type="submit" class="btn primary">Post</button>
           </div>
@@ -194,8 +196,48 @@
         <form id="reelForm" class="compose-pane hidden">
           <input type="file" id="reelMedia" accept="video/*" required />
           <input type="text" name="caption" placeholder="Caption (optional)" />
+          <div class="music-picker-row">
+            <button type="button" class="btn ghost" id="openMusicPicker" style="gap:8px;">
+              <i class="ri-music-2-line"></i> <span id="musicPickerLabel">Add music</span>
+            </button>
+            <button type="button" class="icon-btn hidden" id="clearMusicBtn" title="Remove music">
+              <i class="ri-close-line"></i>
+            </button>
+          </div>
+          <div class="music-track-list hidden" id="musicTrackList"></div>
           <div class="compose-actions">
             <button type="submit" class="btn primary">Upload reel</button>
+          </div>
+        </form>
+
+        <form id="experienceForm" class="compose-pane hidden">
+          <input type="text" id="expTitle" placeholder="Experience title (e.g. Hiking Yosemite)" maxlength="80" required />
+          <textarea name="description" id="expDesc" rows="3" placeholder="Describe your experience…" maxlength="500"></textarea>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <select id="expCategory" class="exp-select">
+              <option value="travel">&#x1F30D; Travel</option>
+              <option value="food">&#x1F374; Food</option>
+              <option value="adventure">&#x26F0;&#xFE0F; Adventure</option>
+              <option value="music">&#x1F3B5; Music</option>
+              <option value="fitness">&#x1F4AA; Fitness</option>
+              <option value="art">&#x1F3A8; Art</option>
+              <option value="tech">&#x1F4BB; Tech</option>
+              <option value="life">&#x2728; Life</option>
+            </select>
+            <button type="button" class="icon-btn" id="expLocationBtn" title="Tag location">
+              <i class="ri-map-pin-line"></i>
+            </button>
+            <span id="expLocationTag" style="font-size:12px;color:var(--primary);display:none;"></span>
+          </div>
+          <input type="file" id="expMedia" accept="image/*,video/*" hidden />
+          <div class="compose-actions">
+            <button type="button" class="icon-btn" id="expPickMedia" title="Add photo/video">
+              <i class="ri-image-add-line"></i>
+            </button>
+            <span id="expMediaLabel" style="font-size:12px;color:var(--text-mute);flex:1;"></span>
+            <button type="submit" class="btn primary" style="background:linear-gradient(135deg,var(--grad-1),var(--grad-2));">
+              <i class="ri-sparkling-line"></i> Share experience
+            </button>
           </div>
         </form>
 
@@ -209,55 +251,6 @@
             <button type="submit" class="btn primary">Create group</button>
           </div>
         </form>
-      </div>
-    </div>
-
-    <!-- ============================================================ -->
-    <!-- PROFILE EDIT MODAL                                           -->
-    <!-- ============================================================ -->
-    <div id="profileEditModal" class="hidden">
-      <div class="profile-edit-sheet">
-        <div class="pem-head">
-          <h3>Edit Profile</h3>
-          <button class="icon-btn" id="profileEditClose"><i class="ri-close-line"></i></button>
-        </div>
-
-        <!-- Avatar upload -->
-        <div class="pem-avatar-row">
-          <div class="pem-avatar-wrap avatar-upload-wrap" id="editAvatarWrap" title="Tap to change photo">
-            <img id="editAvatar" src="" alt="Profile photo" />
-            <div class="avatar-upload-overlay">
-              <i class="ri-camera-line"></i>
-              <span>Change</span>
-            </div>
-          </div>
-          <input type="file" id="editAvatarInput" accept="image/*" hidden />
-          <div class="pem-avatar-hint">Tap photo to upload a new one</div>
-        </div>
-
-        <!-- Fields -->
-        <div class="pem-fields">
-          <div class="pem-field">
-            <label for="editName">Display name</label>
-            <input id="editName" type="text" placeholder="Your name" maxlength="60" />
-          </div>
-          <div class="pem-field">
-            <label for="editUsername">Username</label>
-            <input id="editUsername" type="text" placeholder="username" maxlength="30" />
-          </div>
-          <div class="pem-field">
-            <label for="editBio">Bio</label>
-            <textarea id="editBio" rows="3" placeholder="Tell people about yourself…" maxlength="200"></textarea>
-          </div>
-        </div>
-
-        <!-- Actions -->
-        <div class="pem-actions">
-          <button class="btn ghost" id="editProfileCancel">Cancel</button>
-          <button class="btn primary" id="editProfileSave">
-            <i class="ri-save-line"></i> Save changes
-          </button>
-        </div>
       </div>
     </div>
 
@@ -304,6 +297,33 @@
     <!-- ============================================================ -->
     <!-- LIGHTWEIGHT TOAST                                             -->
     <!-- ============================================================ -->
+
+    <!-- PROFILE EDIT MODAL -->
+    <div class="modal hidden" id="profileEditModal" style="display:none;">
+      <div class="modal-card pem-card">
+        <div class="modal-head">
+          <h3>Edit profile</h3>
+          <button class="icon-btn" id="profileEditClose"><i class="ri-close-line"></i></button>
+        </div>
+        <div class="pem-body">
+          <div class="pem-avatar-row">
+            <div class="avatar-upload-wrap" id="editAvatarWrap">
+              <img id="editAvatar" class="avatar xl" src="" alt="avatar" />
+              <div class="avatar-upload-overlay"><i class="ri-camera-line"></i></div>
+            </div>
+            <input type="file" id="editAvatarInput" accept="image/*" hidden />
+          </div>
+          <label class="pem-label">Name<input id="editName" type="text" maxlength="60" /></label>
+          <label class="pem-label">Username<input id="editUsername" type="text" maxlength="30" /></label>
+          <label class="pem-label">Bio<textarea id="editBio" rows="3" maxlength="200"></textarea></label>
+          <div class="pem-actions">
+            <button class="btn ghost" id="editProfileCancel">Cancel</button>
+            <button class="btn primary" id="editProfileSave"><span id="editSaveText">Save changes</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="toast" class="toast hidden"></div>
 
     <!-- ============================================================ -->
