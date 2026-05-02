@@ -195,8 +195,20 @@ html[data-theme="light"] .chat-view { --chat-veil: rgba(255, 255, 255, 0.55); }
   padding: 6px 8px; border-radius: 8px; margin-bottom: 6px;
   font-size: 13px; opacity: .9; cursor: pointer;
   display: flex; flex-direction: column; gap: 2px;
+  max-width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
 }
-.bubble .reply-quote .q-name { font-weight: 700; font-size: 12px; }
+.bubble .reply-quote .q-name {
+  font-weight: 700; font-size: 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%;
+}
+.bubble .reply-quote .q-text {
+  font-size: 12px; opacity: .8;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%;
+}
 html[data-theme="light"] .bubble:not(.from-me .bubble) .reply-quote { background: rgba(0,0,0,.05); border-color: var(--primary); }
 
 /* Media inside bubble */
@@ -307,7 +319,7 @@ html[data-theme="light"] .bubble:not(.from-me .bubble) .reply-quote { background
 
 /* ---------- Composer ---------- */
 .composer {
-  display: grid; grid-template-columns: auto 1fr auto auto;
+  display: grid; grid-template-columns: auto auto 1fr auto auto;
   gap: 8px; align-items: end;
   padding: 10px 12px;
   background: var(--bg-elev);
@@ -367,3 +379,126 @@ html[data-theme="light"] .bubble:not(.from-me .bubble) .reply-quote { background
   linear-gradient(var(--bg-elev) 1px, transparent 1px) 0 0/24px 24px,
   linear-gradient(90deg, var(--bg-elev) 1px, transparent 1px) 0 0/24px 24px,
   var(--bg-elev-2); }
+
+/* ══════════════════════════════════════════════════════════════════
+   STICKER PICKER — WhatsApp-style fixed slide-up sheet (body append)
+   Zero layout shift. Composer stays where it is.
+══════════════════════════════════════════════════════════════════ */
+.sticker-picker {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: var(--bg-elev);
+  border-radius: 20px 20px 0 0;
+  border-top: 1px solid var(--line);
+  box-shadow: 0 -8px 40px rgba(0,0,0,.32);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  max-height: 48vh;
+  animation: stickerSlideUp .22s cubic-bezier(.25,.46,.45,.94) both;
+}
+.sticker-picker.closing {
+  animation: stickerSlideDown .22s cubic-bezier(.55,.06,.68,.19) both;
+}
+@keyframes stickerSlideUp {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+@keyframes stickerSlideDown {
+  from { transform: translateY(0); }
+  to   { transform: translateY(100%); }
+}
+
+/* Drag handle */
+.sticker-handle {
+  width: 44px; height: 4px;
+  background: var(--line);
+  border-radius: 3px;
+  margin: 10px auto 4px;
+  flex-shrink: 0;
+  cursor: grab;
+}
+
+/* Category tabs */
+.sticker-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 12px 8px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-shrink: 0;
+}
+.sticker-tabs::-webkit-scrollbar { display: none; }
+.sticker-tab {
+  padding: 5px 14px;
+  border-radius: 20px;
+  border: 1.5px solid var(--line);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: .78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.sticker-tab.active,
+.sticker-tab:hover {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+/* Sticker grid */
+.sticker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 82px);
+  gap: 6px;
+  padding: 10px 12px 20px;
+  overflow-y: auto;
+  flex: 1;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.sticker-cell {
+  width: 82px; height: 82px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 14px;
+  cursor: pointer;
+  transition: background .15s, transform .18s;
+}
+.sticker-cell:hover {
+  background: var(--bg-elev-2);
+  transform: scale(1.12);
+}
+.sticker-cell:active { transform: scale(.96); }
+
+/* Sticker bubbles in chat — transparent background like WhatsApp */
+/* Sticker bubbles — completely transparent, no bubble shell at all */
+.sticker-bubble {
+  background: none !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  border: none !important;
+}
+.from-me .sticker-bubble,
+.sticker-bubble {
+  background: none !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+.sticker-bubble lottie-player {
+  display: block;
+  filter: drop-shadow(0 2px 8px rgba(0,0,0,.18));
+}
+/* Time stamp sits neatly below the sticker with no box */
+.sticker-bubble .meta {
+  background: none !important;
+  color: var(--text-mute) !important;
+  font-size: 11px;
+  padding: 2px 0 0 !important;
+  text-shadow: none;
+}

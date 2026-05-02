@@ -16,6 +16,62 @@ import {
   serverTimestamp, increment, arrayUnion, arrayRemove, deleteField,
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// STICKER PACKS — Google Noto Animated Emoji (Google CDN, no API key needed)
+// ─────────────────────────────────────────────────────────────────────────────
+const _G = (code) => `https://fonts.gstatic.com/s/e/notoemoji/latest/${code}/lottie.json`;
+const STICKER_PACKS = [
+  { category: "Faces", stickers: [
+    { name: "Grinning",       url: _G("1f600") },
+    { name: "Tears of Joy",   url: _G("1f602") },
+    { name: "ROFL",           url: _G("1f923") },
+    { name: "Heart Eyes",     url: _G("1f60d") },
+    { name: "Smiling Hearts", url: _G("1f970") },
+    { name: "Cool",           url: _G("1f60e") },
+    { name: "Thinking",       url: _G("1f914") },
+    { name: "Crying",         url: _G("1f622") },
+    { name: "Sobbing",        url: _G("1f62d") },
+    { name: "Annoyed",        url: _G("1f624") },
+    { name: "Mind Blown",     url: _G("1f92f") },
+    { name: "Party Face",     url: _G("1f973") },
+    { name: "Sleepy",         url: _G("1f634") },
+    { name: "Smirk",          url: _G("1f60f") },
+    { name: "Eye Roll",       url: _G("1f644") },
+    { name: "Devil",          url: _G("1f608") },
+    { name: "Star Struck",    url: _G("1f929") },
+    { name: "Unamused",       url: _G("1f612") },
+    { name: "Grimace",        url: _G("1f62c") },
+    { name: "Salute",         url: _G("1fae1") },
+    { name: "Facepalm",       url: _G("1f926") },
+  ]},
+  { category: "Hearts & Vibes", stickers: [
+    { name: "Red Heart",      url: _G("2764_fe0f") },
+    { name: "Broken Heart",   url: _G("1f494") },
+    { name: "Two Hearts",     url: _G("1f495") },
+    { name: "Sparkling Heart",url: _G("1f496") },
+    { name: "Fire",           url: _G("1f525") },
+    { name: "100",            url: _G("1f4af") },
+    { name: "Explosion",      url: _G("1f4a5") },
+    { name: "Rainbow",        url: _G("1f308") },
+    { name: "Star",           url: _G("2b50") },
+    { name: "Glowing Star",   url: _G("1f31f") },
+    { name: "Moon",           url: _G("1f319") },
+    { name: "Sun",            url: _G("2600_fe0f") },
+  ]},
+  { category: "Gestures", stickers: [
+    { name: "Thumbs Up",      url: _G("1f44d") },
+    { name: "Thumbs Down",    url: _G("1f44e") },
+    { name: "Clapping",       url: _G("1f44f") },
+    { name: "Praying",        url: _G("1f64f") },
+    { name: "Muscle",         url: _G("1f4aa") },
+    { name: "Handshake",      url: _G("1f91d") },
+    { name: "Love Hands",     url: _G("1faf6") },
+    { name: "Rocket",         url: _G("1f680") },
+    { name: "Party Popper",   url: _G("1f389") },
+    { name: "Confetti Ball",  url: _G("1f38a") },
+  ]},
+];
+
 // =========================================================================
 // 1. WALLPAPER + COLOR PRESETS
 // =========================================================================
@@ -350,10 +406,13 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
   composerField.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   });
+  composerField.addEventListener("focus", () => { const p = document.getElementById("orbitStickerPicker"); if (p) { p.classList.add("closing"); setTimeout(() => p.remove(), 220); } });
 
   const composer = el("div", { class: "composer" },
     el("button", { class: "ctrl", title: "Emoji", onclick: toggleEmojiPicker },
       el("i", { class: "ri-emotion-line" })),
+    el("button", { class: "ctrl", title: "Stickers", onclick: () => toggleStickerPicker(chatId, isGroup) },
+      el("i", { class: "ri-sticky-note-line" })),
     composerField,
     el("button", { class: "ctrl", title: "Attach photo/video", onclick: () => pickAttachment(chatId) },
       el("i", { class: "ri-image-add-line" })),
@@ -544,7 +603,19 @@ const renderMessages = async (root, snap, { isGroup, chatId, peer }) => {
       bubble.appendChild(mediaWrap);
     }
 
-    if (m.text) {
+    // Sticker message — remove ALL bubble styling so it's fully transparent like WhatsApp
+    if (m.type === "sticker" && m.stickerUrl) {
+      bubble.className = "sticker-bubble"; // replace 'bubble' entirely — no bg, no padding, no shadow
+      const lp = document.createElement("lottie-player");
+      lp.setAttribute("src", m.stickerUrl);
+      lp.setAttribute("background", "transparent");
+      lp.setAttribute("speed", "1");
+      lp.setAttribute("loop", "");
+      lp.setAttribute("autoplay", "");
+      lp.setAttribute("title", m.stickerName || "Sticker");
+      lp.style.cssText = "width:150px;height:150px;display:block;pointer-events:none;";
+      bubble.appendChild(lp);
+    } else if (m.text) {
       const t = el("span", {});
       if (m.deleted) {
         t.innerHTML = '<i class="ri-error-warning-line"></i> Message deleted';
@@ -679,6 +750,121 @@ const openReactPicker = (e, m, isGroup, chatId) => {
 // =========================================================================
 // 10. EMOJI PICKER + ATTACHMENTS
 // =========================================================================
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STICKER PICKER
+// ─────────────────────────────────────────────────────────────────────────────
+const _sendSticker = async (chatId, sticker, isGroup) => {
+  const { addDoc, collection, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js");
+  const { db, state } = await import("./app.js");
+  const colPath = isGroup ? ["groups", chatId, "messages"] : ["chats", chatId, "messages"];
+  await addDoc(collection(db, ...colPath), {
+    type: "sticker",
+    stickerUrl: sticker.url,
+    stickerName: sticker.name,
+    authorUid: state.uid,
+    createdAt: serverTimestamp(),
+    readBy: [state.uid],
+  });
+};
+
+const toggleStickerPicker = (chatId, isGroup = false) => {
+  // If already open, close it
+  const existing = document.getElementById("orbitStickerPicker");
+  if (existing) { existing.classList.add("closing"); setTimeout(() => existing.remove(), 220); return; }
+
+  const picker = document.createElement("div");
+  picker.id = "orbitStickerPicker";
+  picker.className = "sticker-picker";
+
+  // ── KEY FIX: stop ALL clicks inside picker from reaching the outside listener
+  // This handles Lottie's shadow DOM — event still bubbles inside regular DOM
+  // up to the picker element, which stops it. onOutside never fires for
+  // anything inside the sheet.
+  picker.addEventListener("click", (e) => e.stopPropagation());
+
+  // Close helper — uses direct closure reference to picker (no getElementById race)
+  const closePicker = () => {
+    picker.classList.add("closing");
+    setTimeout(() => { if (picker.isConnected) picker.remove(); }, 220);
+  };
+
+  // WhatsApp-style drag handle
+  const handle = document.createElement("div");
+  handle.className = "sticker-handle";
+  picker.appendChild(handle);
+
+  // Category tabs + grid
+  const tabs = document.createElement("div");
+  tabs.className = "sticker-tabs";
+  const grid = document.createElement("div");
+  grid.className = "sticker-grid";
+
+  const showCat = (pack) => {
+    tabs.querySelectorAll(".sticker-tab").forEach((t) =>
+      t.classList.toggle("active", t.dataset.cat === pack.category));
+    grid.innerHTML = "";
+    pack.stickers.forEach((s) => {
+      const cell = document.createElement("div");
+      cell.className = "sticker-cell";
+      cell.title = s.name;
+
+      // pointer-events:none on lottie so cell div receives the click cleanly
+      const lp = document.createElement("lottie-player");
+      lp.setAttribute("src", s.url);
+      lp.setAttribute("background", "transparent");
+      lp.setAttribute("speed", "1");
+      lp.setAttribute("loop", "");
+      lp.setAttribute("autoplay", "");
+      lp.style.cssText = "width:72px;height:72px;pointer-events:none;display:block;";
+      cell.appendChild(lp);
+
+      cell.addEventListener("click", async () => {
+        // Remove picker immediately (before async — avoids any DOM timing issues)
+        picker.remove();
+        try {
+          const colPath = isGroup
+            ? ["groups", chatId, "messages"]
+            : ["chats", chatId, "messages"];
+          await addDoc(collection(db, ...colPath), {
+            type: "sticker",
+            stickerUrl: s.url,
+            stickerName: s.name,
+            authorUid: state.uid,
+            createdAt: serverTimestamp(),
+            readBy: [state.uid],
+          });
+        } catch { toast("Could not send sticker"); }
+      });
+      grid.appendChild(cell);
+    });
+  };
+
+  STICKER_PACKS.forEach((pack) => {
+    const tab = document.createElement("button");
+    tab.className = "sticker-tab";
+    tab.dataset.cat = pack.category;
+    tab.textContent = pack.category;
+    tab.addEventListener("click", () => showCat(pack));
+    tabs.appendChild(tab);
+  });
+
+  picker.appendChild(tabs);
+  picker.appendChild(grid);
+
+  // ── Outside click — bubble phase (not capture) so picker.stopPropagation works
+  const onOutside = (e) => {
+    if (e.target.closest("[title='Stickers']")) return; // ignore sticker button
+    closePicker();
+    document.removeEventListener("click", onOutside);
+  };
+  setTimeout(() => document.addEventListener("click", onOutside), 60);
+
+  // ── Append to document.body — zero layout shift, no insertBefore needed ──
+  document.body.appendChild(picker);
+  if (STICKER_PACKS[0]) showCat(STICKER_PACKS[0]);
+};
+
 let pendingAttachment = null;
 
 const toggleEmojiPicker = (e) => {

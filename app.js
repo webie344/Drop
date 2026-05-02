@@ -1345,6 +1345,7 @@ const openProfileEditModal = () => {
   const ui = document.getElementById("editUsername"); if (ui) ui.value = state.me.username || "";
   const bi = document.getElementById("editBio");      if (bi) bi.value = state.me.bio || "";
   const av = document.getElementById("editAvatar");   if (av) av.src = state.me.photoURL || avatarFor(state.me);
+  modal.classList.remove("hidden");
   modal.style.display = "flex";
 };
 
@@ -1863,7 +1864,7 @@ $("#globalSearch").addEventListener("keydown", async (e) => {
   const save  = document.getElementById("editProfileSave");
   if (!modal || !save) return;
   let pendingAvFile = null;
-  const closeModal = () => { modal.style.display = "none"; pendingAvFile = null; };
+  const closeModal = () => { modal.style.display = "none"; modal.classList.add("hidden"); pendingAvFile = null; };
   document.getElementById("profileEditClose")?.addEventListener("click", closeModal);
   document.getElementById("editProfileCancel")?.addEventListener("click", closeModal);
   modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
