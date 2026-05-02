@@ -7,7 +7,7 @@
 
 import { db, state } from "./app.js";
 import {
-  doc, getDoc, updateDoc,
+  doc, getDoc, setDoc, updateDoc,
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
 const VAPID_PUBLIC_KEY = "d-iV_OyNRNlxhMSK8soG9EJX42y0JXZuIdHvqZSb9GJn_yNmNUoeJ5n6N_6LujIa_yWz0iybdwpnTySf82TKXQ";
@@ -21,7 +21,10 @@ function urlBase64ToUint8Array(base64String) {
 
 // ── Subscribe and save to Firestore (called after user taps Allow) ────────
 async function subscribe() {
-  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    showToastMsg("Push not supported on this browser");
+    return false;
+  }
   try {
     const reg = await navigator.serviceWorker.ready;
     let sub = await reg.pushManager.getSubscription();
@@ -31,12 +34,16 @@ async function subscribe() {
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
       });
     }
-    await updateDoc(doc(db, "users", state.uid), {
-      pushSubscription: JSON.parse(JSON.stringify(sub)),
-    });
+    const subData = JSON.parse(JSON.stringify(sub));
+    // setDoc with merge works even if the user doc is missing fields
+    await setDoc(doc(db, "users", state.uid), {
+      pushSubscription: subData,
+    }, { merge: true });
+    console.log("Orbit: subscription saved", subData.endpoint);
     return true;
   } catch (err) {
-    console.warn("Orbit: push subscribe failed", err);
+    console.error("Orbit: push subscribe failed", err);
+    showToastMsg("Could not save notification settings: " + (err.message || err));
     return false;
   }
 }
