@@ -730,7 +730,6 @@ const renderPost = (p, author, opts = {}) => {
       const text = input.value.trim();
       if (!text) return;
       input.value = "";
-      // Optimistic: show comment immediately
       cBox.classList.remove("hidden");
       cBox.appendChild(el("div", { class: "comment" },
         el("img", { class: "avatar xs", src: avatarFor(state.me) }),
