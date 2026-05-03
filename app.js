@@ -730,7 +730,7 @@ const renderPost = (p, author, opts = {}) => {
       const text = input.value.trim();
       if (!text) return;
       input.value = "";
-      // Optimistic UI — show comment instantly without waiting for Firestore
+      // Optimistic UI — append comment immediately without waiting for Firestore
       cBox.classList.remove("hidden");
       cBox.appendChild(el("div", { class: "comment" },
         el("img", { class: "avatar xs", src: avatarFor(state.me) }),

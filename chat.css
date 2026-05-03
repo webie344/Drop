@@ -590,7 +590,7 @@ html[data-theme="light"] .bubble:not(.from-me .bubble) .reply-quote { background
 }
 
 
-/* ─── Fix 3: Sticker icon embedded inside composer field ─────────────────── */
+/* ─── Fix 3: Sticker button embedded inside input field ──────────────────── */
 .composer-input-wrap {
   position: relative;
   flex: 1;
@@ -600,7 +600,7 @@ html[data-theme="light"] .bubble:not(.from-me .bubble) .reply-quote { background
 }
 .composer-input-wrap .field {
   width: 100%;
-  padding-right: 38px;
+  padding-right: 36px;
 }
 .composer-sticker-inline {
   position: absolute;
@@ -609,6 +609,7 @@ html[data-theme="light"] .bubble:not(.from-me .bubble) .reply-quote { background
   transform: translateY(-50%);
   width: 28px;
   height: 28px;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -617,25 +618,21 @@ html[data-theme="light"] .bubble:not(.from-me .bubble) .reply-quote { background
   cursor: pointer;
   color: var(--text-mute);
   font-size: 18px;
-  padding: 0;
   border-radius: 50%;
-  transition: color 0.15s, opacity 0.15s;
+  transition: color 0.15s, opacity 0.2s;
   z-index: 2;
 }
 .composer-sticker-inline:hover { color: var(--primary); }
 .composer-sticker-inline.hidden { opacity: 0; pointer-events: none; }
 
 /* ─── Fix 5: View-once media ─────────────────────────────────────────────── */
-.view-once-wrap {
-  position: relative;
-  cursor: pointer;
-}
+.view-once-wrap { position: relative; cursor: pointer; }
 .view-once-cover {
   position: absolute;
   inset: 0;
-  background: rgba(0,0,0,0.72);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(0,0,0,0.75);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -649,8 +646,19 @@ html[data-theme="light"] .bubble:not(.from-me .bubble) .reply-quote { background
 }
 .view-once-cover:hover { background: rgba(0,0,0,0.55); }
 .view-once-cover i { font-size: 20px; }
-.view-once-expired {
+.view-once-badge {
   display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: rgba(255,255,255,0.85);
+  background: rgba(0,0,0,0.45);
+  padding: 2px 7px;
+  border-radius: 20px;
+  margin-top: 4px;
+}
+.view-once-expired {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 10px 14px;
@@ -674,11 +682,7 @@ html[data-theme="light"] .bubble:not(.from-me .bubble) .reply-quote { background
   margin-top: 4px;
   transition: all 0.15s;
 }
-.view-once-toggle.active {
-  border-color: var(--primary);
-  color: var(--primary);
-  background: rgba(124,92,255,0.08);
-}
+.view-once-toggle.active { border-color: var(--primary); color: var(--primary); background: rgba(124,92,255,0.08); }
 .view-once-toggle i { font-size: 14px; }
 
 /* ─── Fix 6: Voice draft bar ──────────────────────────────────────────────── */
@@ -686,21 +690,11 @@ html[data-theme="light"] .bubble:not(.from-me .bubble) .reply-quote { background
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
+  padding: 8px 12px;
   background: var(--bg-elev);
   border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
 }
-.voice-draft-icon {
-  font-size: 20px;
-  color: var(--primary);
-  flex-shrink: 0;
-}
-.voice-draft-label {
-  flex: 1;
-  font-size: 14px;
-  color: var(--text-dim);
-}
-.send-voice-btn {
-  color: var(--primary) !important;
-}
+.vd-icon { font-size: 20px; color: var(--primary); flex-shrink: 0; }
+.vd-label { flex: 1; font-size: 13px; color: var(--text-dim); }
+.vd-send i { color: var(--primary); }
+.vd-delete i { color: var(--danger, #ff5c5c); }
