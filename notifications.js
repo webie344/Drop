@@ -10,7 +10,7 @@ import {
   doc, getDoc, setDoc, updateDoc,
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
-const VAPID_PUBLIC_KEY = "d-iV_OyNRNlxhMSK8soG9EJX42y0JXZuIdHvqZSb9GJn_yNmNUoeJ5n6N_6LujIa_yWz0iybdwpnTySf82TKXQ";
+const VAPID_PUBLIC_KEY = "BGaoMxP4XdXet-NnerpGsMWijfdCNEvWIUXt0NShfLsfj1IUyeBiNWG9kYpxFShnjmACcIc2x0igUwbNwKqTKKo";
 
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
