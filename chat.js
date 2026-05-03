@@ -682,6 +682,9 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
       sendBtn.disabled = !hasLeftover;
       sendBtn.style.display = hasLeftover ? "" : "none";
       const _mb = document.getElementById("micBtn"); if (_mb) _mb.style.display = hasLeftover ? "none" : "";
+      // Restore inline sticker button when field is empty after send
+      const _sb = document.getElementById("composerStickerInlineBtn");
+      if (_sb && !hasLeftover) _sb.classList.remove("hidden");
     }
   }
 
@@ -742,9 +745,11 @@ const _showVoiceDraft = (blob, chatId, isGroup) => {
   let _playing = false;
   const playBtn = el("button", { class: "icon-btn vd-play", title: "Preview",
     onclick: () => {
-      if (_playing) { audio.pause(); audio.currentTime = 0;
+      if (_playing) {
+        audio.pause(); audio.currentTime = 0;
         playBtn.querySelector("i").className = "ri-play-fill"; _playing = false;
-      } else { audio.play();
+      } else {
+        audio.play();
         playBtn.querySelector("i").className = "ri-pause-fill"; _playing = true;
       }
     }}, el("i", { class: "ri-play-fill" }));
@@ -846,34 +851,37 @@ const renderMessages = async (root, snap, { isGroup, chatId, peer }) => {
     } else if (m.media?.url) {
       if (m.viewOnce) {
         if (fromMe) {
-          // Sender sees the media with a small view-once badge
+          // Sender: show the media normally with a small "view once" badge
           const _mc = m.media.type === "video"
             ? (_savedVids[m.media.url] || buildVideoPlayer(m.media.url))
             : el("img", { src: m.media.url, loading: "lazy" });
-          const _badge = el("div", { class: "view-once-badge" },
-            el("i", { class: "ri-eye-line" }), " View once");
-          bubble.appendChild(el("div", { class: "b-media" }, _mc, _badge));
+          bubble.appendChild(el("div", { class: "b-media" },
+            _mc,
+            el("div", { class: "view-once-badge" },
+              el("i", { class: "ri-eye-line" }), " View once"),
+          ));
+        } else if ((m.viewedBy || []).includes(state.uid)) {
+          // Recipient already opened it
+          bubble.appendChild(el("div", { class: "b-media" },
+            el("div", { class: "view-once-expired" },
+              el("i", { class: "ri-eye-off-line" }), " Opened")));
         } else {
-          const _voViewed = (m.viewedBy || []).includes(state.uid);
-          if (_voViewed) {
-            bubble.appendChild(el("div", { class: "b-media" },
-              el("div", { class: "view-once-expired" },
-                el("i", { class: "ri-eye-off-line" }), " Opened")));
-          } else {
-            const _cover = el("div", { class: "view-once-cover" },
-              el("i", { class: "ri-eye-line" }), " Tap to view");
-            const _hm = m.media.type === "video"
-              ? (_savedVids[m.media.url] || buildVideoPlayer(m.media.url))
-              : el("img", { src: m.media.url, loading: "lazy" });
-            _hm.style.cssText = "display:none;";
-            const _voWrap = el("div", { class: "b-media view-once-wrap" }, _hm, _cover);
-            _cover.addEventListener("click", async () => {
-              _cover.remove(); _hm.style.display = "";
-              const _vp = isGroup ? ["groups", chatId, "messages", m.id] : ["chats", chatId, "messages", m.id];
-              updateDoc(doc(db, ..._vp), { viewedBy: arrayUnion(state.uid) }).catch(() => {});
-            });
-            bubble.appendChild(_voWrap);
-          }
+          // Recipient has not yet viewed — solid placeholder box
+          const _cover = el("div", { class: "view-once-cover" },
+            el("i", { class: "ri-eye-line" }),
+            el("span", {}, " Tap to view"));
+          _cover.addEventListener("click", async () => {
+            // Replace cover with real media on tap
+            const _rm = m.media.type === "video"
+              ? buildVideoPlayer(m.media.url)
+              : el("img", { src: m.media.url });
+            _cover.replaceWith(el("div", { class: "b-media" }, _rm));
+            const _vp = isGroup
+              ? ["groups", chatId, "messages", m.id]
+              : ["chats", chatId, "messages", m.id];
+            updateDoc(doc(db, ..._vp), { viewedBy: arrayUnion(state.uid) }).catch(() => {});
+          });
+          bubble.appendChild(el("div", { class: "b-media" }, _cover));
         }
       } else {
         let mediaContent;
