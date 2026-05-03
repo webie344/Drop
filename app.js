@@ -478,7 +478,11 @@ const renderFeed = (root, restoreScrollY = 0) => {
   root.appendChild(wrap);
 
   const q = query(collection(db, "posts"), orderBy("createdAt", "desc"), limit(50));
+  let _lastPostIds = "";
   const unsub = onSnapshot(q, async (snap) => {
+    const _newIds = snap.docs.map(d => d.id).join(",");
+    if (_newIds === _lastPostIds && list.children.length > 0) return;
+    _lastPostIds = _newIds;
     list.innerHTML = "";
     trendingScroller.innerHTML = "";
     if (snap.empty) {
@@ -726,6 +730,15 @@ const renderPost = (p, author, opts = {}) => {
       const text = input.value.trim();
       if (!text) return;
       input.value = "";
+      // Optimistic UI — show comment instantly without waiting for Firestore
+      cBox.classList.remove("hidden");
+      cBox.appendChild(el("div", { class: "comment" },
+        el("img", { class: "avatar xs", src: avatarFor(state.me) }),
+        el("div", { class: "body" },
+          el("div", { class: "name" }, state.me?.name || "User"),
+          el("div", { class: "text", text }),
+        ),
+      ));
       await addDoc(collection(db, "posts", p.id, "comments"), {
         text, authorUid: state.uid, createdAt: serverTimestamp(),
       });

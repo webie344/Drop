@@ -324,7 +324,7 @@ html[data-theme="light"] .bubble:not(.from-me .bubble) .reply-quote { background
 
 /* ---------- Composer ---------- */
 .composer {
-  display: grid; grid-template-columns: auto auto 1fr auto auto auto;
+  display: grid; grid-template-columns: auto 1fr auto auto auto;
   gap: 8px; align-items: end;
   padding: 10px 12px;
   background: var(--bg-elev);
@@ -587,4 +587,120 @@ html[data-theme="light"] .bubble:not(.from-me .bubble) .reply-quote { background
 @keyframes pulse-rec {
   0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.55); }
   50%       { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
+}
+
+
+/* ─── Fix 3: Sticker icon embedded inside composer field ─────────────────── */
+.composer-input-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.composer-input-wrap .field {
+  width: 100%;
+  padding-right: 38px;
+}
+.composer-sticker-inline {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-mute);
+  font-size: 18px;
+  padding: 0;
+  border-radius: 50%;
+  transition: color 0.15s, opacity 0.15s;
+  z-index: 2;
+}
+.composer-sticker-inline:hover { color: var(--primary); }
+.composer-sticker-inline.hidden { opacity: 0; pointer-events: none; }
+
+/* ─── Fix 5: View-once media ─────────────────────────────────────────────── */
+.view-once-wrap {
+  position: relative;
+  cursor: pointer;
+}
+.view-once-cover {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: inherit;
+  z-index: 3;
+  transition: background 0.2s;
+}
+.view-once-cover:hover { background: rgba(0,0,0,0.55); }
+.view-once-cover i { font-size: 20px; }
+.view-once-expired {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  background: var(--bg-elev-2);
+  border-radius: 10px;
+  color: var(--text-mute);
+  font-size: 13px;
+  font-style: italic;
+}
+.view-once-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: var(--bg-elev);
+  color: var(--text-mute);
+  cursor: pointer;
+  margin-top: 4px;
+  transition: all 0.15s;
+}
+.view-once-toggle.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(124,92,255,0.08);
+}
+.view-once-toggle i { font-size: 14px; }
+
+/* ─── Fix 6: Voice draft bar ──────────────────────────────────────────────── */
+.voice-draft-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.voice-draft-icon {
+  font-size: 20px;
+  color: var(--primary);
+  flex-shrink: 0;
+}
+.voice-draft-label {
+  flex: 1;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+.send-voice-btn {
+  color: var(--primary) !important;
 }

@@ -91,55 +91,105 @@ let _recTimerTo    = null;
 // ─────────────────────────────────────────────────────────────────────────────
 const _G = (code) => `https://fonts.gstatic.com/s/e/notoemoji/latest/${code}/lottie.json`;
 const STICKER_PACKS = [
-  { category: "Faces", stickers: [
-    { name: "Grinning",       url: _G("1f600") },
-    { name: "Tears of Joy",   url: _G("1f602") },
-    { name: "ROFL",           url: _G("1f923") },
-    { name: "Heart Eyes",     url: _G("1f60d") },
-    { name: "Smiling Hearts", url: _G("1f970") },
-    { name: "Cool",           url: _G("1f60e") },
-    { name: "Thinking",       url: _G("1f914") },
-    { name: "Crying",         url: _G("1f622") },
-    { name: "Sobbing",        url: _G("1f62d") },
-    { name: "Annoyed",        url: _G("1f624") },
-    { name: "Mind Blown",     url: _G("1f92f") },
-    { name: "Party Face",     url: _G("1f973") },
-    { name: "Sleepy",         url: _G("1f634") },
-    { name: "Smirk",          url: _G("1f60f") },
-    { name: "Eye Roll",       url: _G("1f644") },
-    { name: "Devil",          url: _G("1f608") },
-    { name: "Star Struck",    url: _G("1f929") },
-    { name: "Unamused",       url: _G("1f612") },
-    { name: "Grimace",        url: _G("1f62c") },
-    { name: "Salute",         url: _G("1fae1") },
-    { name: "Facepalm",       url: _G("1f926") },
-  ]},
-  { category: "Hearts & Vibes", stickers: [
-    { name: "Red Heart",      url: _G("2764_fe0f") },
-    { name: "Broken Heart",   url: _G("1f494") },
-    { name: "Two Hearts",     url: _G("1f495") },
-    { name: "Sparkling Heart",url: _G("1f496") },
-    { name: "Fire",           url: _G("1f525") },
-    { name: "100",            url: _G("1f4af") },
-    { name: "Explosion",      url: _G("1f4a5") },
-    { name: "Rainbow",        url: _G("1f308") },
-    { name: "Star",           url: _G("2b50") },
-    { name: "Glowing Star",   url: _G("1f31f") },
-    { name: "Moon",           url: _G("1f319") },
-    { name: "Sun",            url: _G("2600_fe0f") },
-  ]},
-  { category: "Gestures", stickers: [
-    { name: "Thumbs Up",      url: _G("1f44d") },
-    { name: "Thumbs Down",    url: _G("1f44e") },
-    { name: "Clapping",       url: _G("1f44f") },
-    { name: "Praying",        url: _G("1f64f") },
-    { name: "Muscle",         url: _G("1f4aa") },
-    { name: "Handshake",      url: _G("1f91d") },
-    { name: "Love Hands",     url: _G("1faf6") },
-    { name: "Rocket",         url: _G("1f680") },
-    { name: "Party Popper",   url: _G("1f389") },
-    { name: "Confetti Ball",  url: _G("1f38a") },
-  ]},
+  {
+    category: "Expressions",
+    stickers: [
+      { name: "Happy",     url: "https://assets2.lottiefiles.com/packages/lf20_jbbql60i.json" },
+      { name: "Love",      url: "https://assets2.lottiefiles.com/packages/lf20_hy4txm7l.json" },
+      { name: "Sad",       url: "https://assets6.lottiefiles.com/packages/lf20_uu0x8lqv.json" },
+      { name: "Angry",     url: "https://assets1.lottiefiles.com/packages/lf20_q5pk6p1k.json" },
+      { name: "Cool",      url: "https://assets3.lottiefiles.com/packages/lf20_xxza4czj.json" },
+      { name: "Surprised", url: "https://assets6.lottiefiles.com/packages/lf20_ys7vybms.json" },
+      { name: "Wink",      url: "https://assets4.lottiefiles.com/packages/lf20_iu9o9gzf.json" },
+      { name: "Sleepy",    url: "https://assets3.lottiefiles.com/packages/lf20_5njmvkfn.json" },
+      { name: "Laughing",  url: "https://assets4.lottiefiles.com/packages/lf20_sy6t7bfm.json" },
+      { name: "Shocked",   url: "https://assets9.lottiefiles.com/packages/lf20_qp1q7mct.json" },
+    ],
+  },
+  {
+    category: "Orbit",
+    stickers: [
+      { name: "Fire",      url: "https://assets6.lottiefiles.com/packages/lf20_sy6t7bfm.json" },
+      { name: "Star",      url: "https://assets9.lottiefiles.com/packages/lf20_qp1q7mct.json" },
+      { name: "Heart",     url: "https://assets9.lottiefiles.com/packages/lf20_CtaI6L.json" },
+      { name: "Thumbs Up", url: "https://assets9.lottiefiles.com/packages/lf20_qnh3xpot.json" },
+      { name: "Party",     url: "https://assets3.lottiefiles.com/packages/lf20_obhph3t0.json" },
+      { name: "Rocket",    url: "https://assets3.lottiefiles.com/packages/lf20_msnfuqx6.json" },
+      { name: "Wave",      url: "https://assets1.lottiefiles.com/packages/lf20_hxc8ldwf.json" },
+      { name: "Rainbow",   url: "https://assets2.lottiefiles.com/packages/lf20_puciaact.json" },
+      { name: "Trophy",    url: "https://assets4.lottiefiles.com/packages/lf20_l4i3j2cO.json" },
+      { name: "Money",     url: "https://assets1.lottiefiles.com/packages/lf20_g8bqhoww.json" },
+    ],
+  },
+  {
+    category: "Animals",
+    stickers: [
+      { name: "Cat",       url: "https://assets7.lottiefiles.com/packages/lf20_myejiggj.json" },
+      { name: "Dog",       url: "https://assets6.lottiefiles.com/packages/lf20_vclgzzgy.json" },
+      { name: "Panda",     url: "https://assets10.lottiefiles.com/packages/lf20_syqnfe7c.json" },
+      { name: "Fox",       url: "https://assets3.lottiefiles.com/packages/lf20_v92wwc3r.json" },
+      { name: "Penguin",   url: "https://assets6.lottiefiles.com/packages/lf20_hg6trsab.json" },
+      { name: "Bunny",     url: "https://assets3.lottiefiles.com/packages/lf20_6e0icsys.json" },
+      { name: "Bear",      url: "https://assets7.lottiefiles.com/packages/lf20_jcocrn5t.json" },
+      { name: "Unicorn",   url: "https://assets6.lottiefiles.com/packages/lf20_9cyyl02m.json" },
+      { name: "Chick",     url: "https://assets2.lottiefiles.com/packages/lf20_yd53lfyq.json" },
+      { name: "Frog",      url: "https://assets9.lottiefiles.com/packages/lf20_zzlbtpf6.json" },
+    ],
+  },
+  {
+    category: "Food",
+    stickers: [
+      { name: "Pizza",     url: "https://assets4.lottiefiles.com/packages/lf20_ks4jfngb.json" },
+      { name: "Burger",    url: "https://assets3.lottiefiles.com/packages/lf20_ulafbkbk.json" },
+      { name: "Sushi",     url: "https://assets9.lottiefiles.com/packages/lf20_sn3y3ctf.json" },
+      { name: "Coffee",    url: "https://assets6.lottiefiles.com/packages/lf20_3vbOcw.json" },
+      { name: "Cake",      url: "https://assets3.lottiefiles.com/packages/lf20_obhph3t0.json" },
+      { name: "Avocado",   url: "https://assets1.lottiefiles.com/packages/lf20_GOfCLl.json" },
+      { name: "Ice Cream", url: "https://assets7.lottiefiles.com/packages/lf20_rjnoexcf.json" },
+      { name: "Taco",      url: "https://assets8.lottiefiles.com/packages/lf20_l13xh8if.json" },
+      { name: "Cookie",    url: "https://assets5.lottiefiles.com/packages/lf20_bpqri9y4.json" },
+      { name: "Popcorn",   url: "https://assets2.lottiefiles.com/packages/lf20_qp1q7mct.json" },
+    ],
+  },
+  {
+    category: "Sports",
+    stickers: [
+      { name: "Soccer",    url: "https://assets3.lottiefiles.com/packages/lf20_msnfuqx6.json" },
+      { name: "Basketball",url: "https://assets6.lottiefiles.com/packages/lf20_sy6t7bfm.json" },
+      { name: "Trophy",    url: "https://assets4.lottiefiles.com/packages/lf20_l4i3j2cO.json" },
+      { name: "Gym",       url: "https://assets9.lottiefiles.com/packages/lf20_qnh3xpot.json" },
+      { name: "Medal",     url: "https://assets1.lottiefiles.com/packages/lf20_g8bqhoww.json" },
+      { name: "Gaming",    url: "https://assets2.lottiefiles.com/packages/lf20_hy4txm7l.json" },
+      { name: "Tennis",    url: "https://assets3.lottiefiles.com/packages/lf20_v92wwc3r.json" },
+      { name: "Running",   url: "https://assets6.lottiefiles.com/packages/lf20_uu0x8lqv.json" },
+    ],
+  },
+  {
+    category: "Travel",
+    stickers: [
+      { name: "Airplane",  url: "https://assets3.lottiefiles.com/packages/lf20_msnfuqx6.json" },
+      { name: "Rocket",    url: "https://assets3.lottiefiles.com/packages/lf20_6e0icsys.json" },
+      { name: "Earth",     url: "https://assets1.lottiefiles.com/packages/lf20_hxc8ldwf.json" },
+      { name: "Rainbow",   url: "https://assets2.lottiefiles.com/packages/lf20_puciaact.json" },
+      { name: "Mountain",  url: "https://assets4.lottiefiles.com/packages/lf20_iu9o9gzf.json" },
+      { name: "Beach",     url: "https://assets7.lottiefiles.com/packages/lf20_myejiggj.json" },
+      { name: "Map",       url: "https://assets9.lottiefiles.com/packages/lf20_zzlbtpf6.json" },
+      { name: "Camera",    url: "https://assets5.lottiefiles.com/packages/lf20_bpqri9y4.json" },
+    ],
+  },
+  {
+    category: "Celebrate",
+    stickers: [
+      { name: "Party",     url: "https://assets3.lottiefiles.com/packages/lf20_obhph3t0.json" },
+      { name: "Fireworks", url: "https://assets2.lottiefiles.com/packages/lf20_jbbql60i.json" },
+      { name: "Gift",      url: "https://assets1.lottiefiles.com/packages/lf20_q5pk6p1k.json" },
+      { name: "Balloon",   url: "https://assets6.lottiefiles.com/packages/lf20_9cyyl02m.json" },
+      { name: "Confetti",  url: "https://assets6.lottiefiles.com/packages/lf20_ys7vybms.json" },
+      { name: "Cake",      url: "https://assets4.lottiefiles.com/packages/lf20_xxza4czj.json" },
+      { name: "Cheers",    url: "https://assets3.lottiefiles.com/packages/lf20_5njmvkfn.json" },
+      { name: "Sparkle",   url: "https://assets9.lottiefiles.com/packages/lf20_CtaI6L.json" },
+    ],
+  },
 ];
 
 // =========================================================================
@@ -461,9 +511,11 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
     const hasText = composerField.textContent.trim().length > 0;
     const sendBtn = bottomBar.querySelector("#sendBtn");
     const micBtn  = bottomBar.querySelector("#micBtn");
+    const stickerInBtn = bottomBar.querySelector("#composerStickerInlineBtn");
     const active  = hasText || !!pendingAttachment;
     if (sendBtn) { sendBtn.disabled = !active; sendBtn.style.display = active ? "" : "none"; }
     if (micBtn)  micBtn.style.display = active ? "none" : "";
+    if (stickerInBtn) stickerInBtn.classList.toggle("hidden", hasText);
     if (sendBtn) sendBtn.disabled = !active;
     // typing indicator
     if (!isGroup) {
@@ -488,12 +540,15 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
     onclick: () => startVoiceRecord(chatId, isGroup) },
     el("i", { class: "ri-mic-line" }));
 
+  const _stickerInlineBtn = el("button", {
+    class: "ctrl composer-sticker-inline", id: "composerStickerInlineBtn", title: "Stickers",
+    onclick: (e) => { e.stopPropagation(); toggleStickerPicker(chatId, isGroup); },
+  }, el("i", { class: "ri-sticky-note-2-line" }));
+  const _composerInputWrap = el("div", { class: "composer-input-wrap" }, composerField, _stickerInlineBtn);
   const composer = el("div", { class: "composer" },
     el("button", { class: "ctrl", title: "Emoji", onclick: toggleEmojiPicker },
       el("i", { class: "ri-emotion-line" })),
-    el("button", { class: "ctrl", title: "Stickers", onclick: () => toggleStickerPicker(chatId, isGroup) },
-      el("i", { class: "ri-sticky-note-line" })),
-    composerField,
+    _composerInputWrap,
     el("button", { class: "ctrl", title: "Attach photo/video", onclick: () => pickAttachment(chatId) },
       el("i", { class: "ri-image-add-line" })),
     micBtnEl,
@@ -561,10 +616,13 @@ const renderChatView = ({ isGroup, chatId, peer, group }) => {
         if (strip) { strip.innerHTML = ""; strip.classList.add("hidden"); }
       }
 
+      const _sendViewOnce = pendingViewOnce;
+      pendingViewOnce = false;
       const msg = {
         authorUid: state.uid,
         text: text || "",
         media,
+        viewOnce: _sendViewOnce || false,
         replyTo: optReply ? {
           id: optReply.id, text: optReply.text || (optReply.media ? "[media]" : ""),
           authorUid: optReply.authorUid, authorName: optReply.authorName || "",
@@ -637,20 +695,11 @@ const startVoiceRecord = async (chatId, isGroup) => {
     _mediaRecorder.onstop = async () => {
       stream.getTracks().forEach((t) => t.stop());
       const blob = new Blob(_audioChunks, { type: _mediaRecorder.mimeType });
-      const file = new File([blob], "voice.webm", { type: blob.type });
-      toast("Sending voice note…");
-      try {
-        const up = await uploadToCloudinary(file, "video");
-        const colPath = isGroup ? ["groups", chatId, "messages"] : ["chats", chatId, "messages"];
-        await addDoc(collection(db, ...colPath), {
-          authorUid: state.uid, type: "voice",
-          media: { url: up.url, type: "audio", duration: up.duration || 0 },
-          createdAt: serverTimestamp(), readBy: [state.uid],
-        });
-      } catch { toast("Could not send voice note"); }
       _mediaRecorder = null; _audioChunks = [];
       const micBtn = document.getElementById("micBtn");
       if (micBtn) { micBtn.classList.remove("recording"); micBtn.querySelector("i").className = "ri-mic-line"; }
+      // Show draft bar so user can play, delete, or send
+      _showVoiceDraft(blob, chatId, isGroup);
     };
     _mediaRecorder.start(200);
     const micBtn = document.getElementById("micBtn");
@@ -663,6 +712,51 @@ const startVoiceRecord = async (chatId, isGroup) => {
 const stopVoiceRecord = (chatId, isGroup) => {
   clearTimeout(_recTimerTo);
   if (_mediaRecorder && _mediaRecorder.state !== "inactive") _mediaRecorder.stop();
+};
+
+const _showVoiceDraft = (blob, chatId, isGroup) => {
+  const existing = document.getElementById("voiceDraftBar");
+  if (existing) existing.remove();
+  const objUrl = URL.createObjectURL(blob);
+  const audio = new Audio(objUrl);
+  let _vdPlaying = false;
+  const playBtn = el("button", { class: "icon-btn", title: "Play preview",
+    onclick: () => {
+      if (_vdPlaying) {
+        audio.pause(); audio.currentTime = 0;
+        playBtn.querySelector("i").className = "ri-play-fill"; _vdPlaying = false;
+      } else {
+        audio.play(); playBtn.querySelector("i").className = "ri-pause-fill"; _vdPlaying = true;
+      }
+    }}, el("i", { class: "ri-play-fill" }));
+  audio.onended = () => { playBtn.querySelector("i").className = "ri-play-fill"; _vdPlaying = false; };
+  const bar = el("div", { id: "voiceDraftBar", class: "voice-draft-bar" },
+    el("i", { class: "ri-mic-fill voice-draft-icon" }),
+    el("span", { class: "voice-draft-label" }, "Voice note"),
+    playBtn,
+    el("button", { class: "icon-btn", title: "Delete",
+      onclick: () => { audio.pause(); URL.revokeObjectURL(objUrl); bar.remove(); }
+    }, el("i", { class: "ri-delete-bin-line" })),
+    el("button", { class: "icon-btn send-voice-btn", title: "Send",
+      onclick: async () => {
+        bar.remove();
+        toast("Sending voice note…");
+        try {
+          const file = new File([blob], "voice.webm", { type: blob.type });
+          const up = await uploadToCloudinary(file, "video");
+          const colPath = isGroup ? ["groups", chatId, "messages"] : ["chats", chatId, "messages"];
+          await addDoc(collection(db, ...colPath), {
+            authorUid: state.uid, type: "voice",
+            media: { url: up.url, type: "audio", duration: up.duration || 0 },
+            createdAt: serverTimestamp(), readBy: [state.uid],
+          });
+        } catch { toast("Could not send voice note"); }
+      }
+    }, el("i", { class: "ri-send-plane-fill" })),
+  );
+  const bottomBar = document.getElementById("chatBottomBar");
+  if (bottomBar) bottomBar.insertAdjacentElement("beforebegin", bar);
+  else document.body.appendChild(bar);
 };
 
 // 8. RENDER MESSAGES (with day dividers, bubbles, reactions, replies)
@@ -731,13 +825,37 @@ const renderMessages = async (root, snap, { isGroup, chatId, peer }) => {
     if (m.type === "voice" && m.media?.url) {
       bubble.appendChild(buildVoicePlayer(m.media.url));
     } else if (m.media?.url) {
-      let mediaContent;
-      if (m.media.type === "video") {
-        mediaContent = _savedVids[m.media.url] || buildVideoPlayer(m.media.url);
+      if (m.viewOnce) {
+        const _voViewed = (m.viewedBy || []).includes(state.uid);
+        if (_voViewed) {
+          bubble.appendChild(el("div", { class: "b-media" },
+            el("div", { class: "view-once-expired" },
+              el("i", { class: "ri-eye-off-line" }), " Opened")));
+        } else {
+          const _voIsVid = m.media.type === "video";
+          const _voCover = el("div", { class: "view-once-cover" },
+            el("i", { class: "ri-eye-line" }), " Tap to view");
+          const _voMedia = _voIsVid
+            ? (_savedVids[m.media.url] || buildVideoPlayer(m.media.url))
+            : el("img", { src: m.media.url, loading: "lazy" });
+          _voMedia.style.cssText = "display:none;";
+          const _voWrap = el("div", { class: "b-media view-once-wrap" }, _voMedia, _voCover);
+          _voCover.addEventListener("click", async () => {
+            _voCover.remove(); _voMedia.style.display = "";
+            const _vPath = isGroup ? ["groups", chatId, "messages", m.id] : ["chats", chatId, "messages", m.id];
+            updateDoc(doc(db, ..._vPath), { viewedBy: arrayUnion(state.uid) }).catch(() => {});
+          });
+          bubble.appendChild(_voWrap);
+        }
       } else {
-        mediaContent = el("img", { src: m.media.url, loading: "lazy" });
+        let mediaContent;
+        if (m.media.type === "video") {
+          mediaContent = _savedVids[m.media.url] || buildVideoPlayer(m.media.url);
+        } else {
+          mediaContent = el("img", { src: m.media.url, loading: "lazy" });
+        }
+        bubble.appendChild(el("div", { class: "b-media" }, mediaContent));
       }
-      bubble.appendChild(el("div", { class: "b-media" }, mediaContent));
     }
 
     // Sticker message — remove ALL bubble styling so it's fully transparent like WhatsApp
@@ -1003,6 +1121,7 @@ const toggleStickerPicker = (chatId, isGroup = false) => {
 };
 
 let pendingAttachment = null;
+let pendingViewOnce = false;
 
 const toggleEmojiPicker = (e) => {
   e.stopPropagation();
@@ -1047,9 +1166,20 @@ const pickAttachment = (chatId) => {
           $("#sendBtn").disabled = !f?.textContent.trim();
         }
       }, el("i", { class: "ri-close-line" }));
+      const _voToggleBtn = el("button", {
+        class: "view-once-toggle",
+        title: "View once: OFF",
+        onclick: () => {
+          pendingViewOnce = !pendingViewOnce;
+          _voToggleBtn.classList.toggle("active", pendingViewOnce);
+          _voToggleBtn.title = pendingViewOnce ? "View once: ON" : "View once: OFF";
+          _voToggleBtn.querySelector("span").textContent = pendingViewOnce ? "View once • ON" : "View once";
+        },
+      }, el("i", { class: "ri-eye-line" }), el("span", {}, "View once"));
       strip.appendChild(preview);
       strip.appendChild(removeBtn);
       strip.appendChild(el("span", { style: "font-size:13px;color:var(--text-dim);", text: pendingAttachment.name }));
+      strip.appendChild(_voToggleBtn);
     }
     $("#sendBtn").disabled = false;
   };
