@@ -1,20 +1,19 @@
 // =========================================================================
-// Orbit — notifications.js
-// Shows an "Enable notifications" banner after login.
-// Browsers REQUIRE a user tap to show the permission prompt — it cannot
-// pop up automatically. This file handles that correctly.
+// Orbit — notifications.js  (v4 — new VAPID key)
+// Handles push subscription, enable banner, in-app toasts, and outbound
+// push calls to /api/send-notification.
 // =========================================================================
 
 import { db, state } from "./app.js";
 import {
-  doc, getDoc, setDoc,
+  doc, getDoc, setDoc, addDoc, collection, serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
-// Generated VAPID public key — matches VAPID_PUBLIC_KEY env var on the server
+// Generated VAPID public key — must match VAPID_PUBLIC_KEY env var on the server
 const VAPID_PUBLIC_KEY = "BKhFP8VMKoxGNG0Z8fw6S_v9MXGevGDO49XWfc8VGnWp04nkTKqUArCn798R8bJuGOgtzfK3Q601UXctdbQ9j58";
 
-// Bump this version any time you change the VAPID key — forces a re-subscribe
-const SUBSCRIPTION_VERSION = "v3";
+// Bump this any time you change the VAPID key — forces every client to re-subscribe
+const SUBSCRIPTION_VERSION = "v4";
 
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -33,7 +32,7 @@ async function subscribe() {
     const reg = await navigator.serviceWorker.ready;
 
     // Always unsubscribe old subscription first so a fresh one is created
-    // with the current VAPID key (old/invalid subscriptions cause silent failures)
+    // with the current VAPID key (stale subscriptions cause 410 errors)
     const existing = await reg.pushManager.getSubscription();
     if (existing) await existing.unsubscribe();
 
@@ -101,7 +100,6 @@ function showToastMsg(msg) {
 
 // ── In-app notification (shown while app is open) ────────────────────────
 export function showInAppNotif(title, body, url) {
-  // If the page is visible/focused, show a toast instead of a push
   const t = document.getElementById("toast");
   if (!t) return;
   t.innerHTML = `<strong>${title}</strong><br><small>${body}</small>`;
@@ -138,17 +136,14 @@ async function checkForStaleSubscription() {
     const savedVersion = snap.data()?.pushSubVersion;
     const localVersion = localStorage.getItem("orbit:sub-version");
 
-    // Everything looks good — do nothing
     if (saved && savedVersion === SUBSCRIPTION_VERSION && localVersion === SUBSCRIPTION_VERSION) return;
 
-    // Subscription is missing from Firestore — silently re-subscribe
     if (!saved) {
       console.log("Orbit: no saved subscription, re-subscribing silently");
       await subscribe();
       return;
     }
 
-    // Version mismatch — prompt the user to refresh their subscription
     setTimeout(() => {
       showNotifBanner("Tap Refresh to keep getting notifications");
       const btn = document.getElementById("notifEnableBtn");
@@ -188,6 +183,25 @@ document.addEventListener("orbit:auth-ready", () => {
   }
 });
 
+// ── Write a Firestore notification record ─────────────────────────────────
+// Exported so app.js can call it directly without the import() dynamic trick.
+export async function saveNotifRecord(toUid, type, extra = {}) {
+  if (!toUid || toUid === state.uid) return;
+  try {
+    await addDoc(collection(db, "notifications", toUid, "items"), {
+      type,
+      fromUid: state.uid,
+      fromName: state.me?.name || "Someone",
+      fromAvatar: state.me?.photoURL || "",
+      read: false,
+      createdAt: serverTimestamp(),
+      ...extra,
+    });
+  } catch (err) {
+    console.warn("Orbit: saveNotifRecord failed", err);
+  }
+}
+
 // ── Send a push notification to another user ─────────────────────────────
 export async function notifyUser(toUid, title, body, url = "/") {
   if (!toUid || toUid === state.uid) return;
@@ -206,7 +220,6 @@ export async function notifyUser(toUid, title, body, url = "/") {
 
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      // 410 = subscription expired — clear it so we stop trying
       if (res.status === 410) {
         await setDoc(doc(db, "users", toUid), { pushSubscription: null }, { merge: true });
       }
@@ -217,7 +230,7 @@ export async function notifyUser(toUid, title, body, url = "/") {
   }
 }
 
-// ── Send a test push to yourself — call this from the browser or a button ──
+// ── Send a test push to yourself ─────────────────────────────────────────
 export async function sendTestNotification() {
   if (!state.uid) { showToastMsg("Not logged in"); return; }
   try {
@@ -255,5 +268,4 @@ export async function sendTestNotification() {
   }
 }
 
-// Expose for quick testing from any button or the browser address bar
 window._orbitTestNotif = sendTestNotification;
