@@ -11,7 +11,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
 // Generated VAPID public key — matches VAPID_PUBLIC_KEY env var on the server
-const VAPID_PUBLIC_KEY = "BIKpHgyU6eIbD58tLRn2djVfs8QAUt41lyGeYb_NzVsgFbN3JG5MO7mMKEox7pFeBXUnQQW4dzrtEKxtkcmCuQQ";
+const VAPID_PUBLIC_KEY = "BKhFP8VMKoxGNG0Z8fw6S_v9MXGevGDO49XWfc8VGnWp04nkTKqUArCn798R8bJuGOgtzfK3Q601UXctdbQ9j58";
 
 // Bump this version any time you change the VAPID key — forces a re-subscribe
 const SUBSCRIPTION_VERSION = "v3";
