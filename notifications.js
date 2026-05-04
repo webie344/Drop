@@ -10,10 +10,11 @@ import {
   doc, getDoc, setDoc,
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
-const VAPID_PUBLIC_KEY = "BGaoMxP4XdXet-NnerpGsMWijfdCNEvWIUXt0NShfLsfj1IUyeBiNWG9kYpxFShnjmACcIc2x0igUwbNwKqTKKo";
+// Generated VAPID public key — matches VAPID_PUBLIC_KEY env var on the server
+const VAPID_PUBLIC_KEY = "BIKpHgyU6eIbD58tLRn2djVfs8QAUt41lyGeYb_NzVsgFbN3JG5MO7mMKEox7pFeBXUnQQW4dzrtEKxtkcmCuQQ";
 
-// Bump this version any time you change the VAPID key — it forces a re-subscribe
-const SUBSCRIPTION_VERSION = "v2";
+// Bump this version any time you change the VAPID key — forces a re-subscribe
+const SUBSCRIPTION_VERSION = "v3";
 
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -47,7 +48,6 @@ async function subscribe() {
       pushSubVersion: SUBSCRIPTION_VERSION,
     }, { merge: true });
 
-    // Remember locally that this device is up to date
     localStorage.setItem("orbit:sub-version", SUBSCRIPTION_VERSION);
     console.log("Orbit: subscription saved", subData.endpoint);
     return true;
@@ -62,7 +62,6 @@ async function subscribe() {
 function showNotifBanner(msg) {
   const banner = document.getElementById("notifEnableBanner");
   if (!banner) return;
-  // Optionally update the description text if a message is passed
   if (msg) {
     const span = banner.querySelector(".notif-enable-text span");
     if (span) span.textContent = msg;
@@ -84,7 +83,6 @@ async function handleEnableClick() {
   if (permission === "granted") {
     const ok = await subscribe();
     hideNotifBanner();
-    // Clear dismissed flag so banner can show again if needed later
     localStorage.removeItem("orbit:notif-dismissed");
     if (ok) showToastMsg("Notifications enabled!");
   } else {
@@ -99,6 +97,24 @@ function showToastMsg(msg) {
   t.textContent = msg;
   t.classList.remove("hidden");
   setTimeout(() => t.classList.add("hidden"), 3000);
+}
+
+// ── In-app notification (shown while app is open) ────────────────────────
+export function showInAppNotif(title, body, url) {
+  // If the page is visible/focused, show a toast instead of a push
+  const t = document.getElementById("toast");
+  if (!t) return;
+  t.innerHTML = `<strong>${title}</strong><br><small>${body}</small>`;
+  t.classList.remove("hidden");
+  if (url) t.style.cursor = "pointer";
+  const go = url ? () => { window.location.hash = url; } : null;
+  if (go) t.onclick = go;
+  clearTimeout(showInAppNotif._t);
+  showInAppNotif._t = setTimeout(() => {
+    t.classList.add("hidden");
+    t.style.cursor = "";
+    t.onclick = null;
+  }, 4000);
 }
 
 // ── Check whether to show the first-time enable banner ───────────────────
@@ -117,18 +133,22 @@ async function checkForStaleSubscription() {
   if (!state.uid) return;
 
   try {
+    const snap = await getDoc(doc(db, "users", state.uid));
+    const saved        = snap.data()?.pushSubscription;
+    const savedVersion = snap.data()?.pushSubVersion;
     const localVersion = localStorage.getItem("orbit:sub-version");
 
-    // If local version matches current, check Firestore to make sure it's saved
-    if (localVersion === SUBSCRIPTION_VERSION) {
-      const snap = await getDoc(doc(db, "users", state.uid));
-      const saved = snap.data()?.pushSubscription;
-      const savedVersion = snap.data()?.pushSubVersion;
-      // Subscription exists and is current — nothing to do
-      if (saved && savedVersion === SUBSCRIPTION_VERSION) return;
+    // Everything looks good — do nothing
+    if (saved && savedVersion === SUBSCRIPTION_VERSION && localVersion === SUBSCRIPTION_VERSION) return;
+
+    // Subscription is missing from Firestore — silently re-subscribe
+    if (!saved) {
+      console.log("Orbit: no saved subscription, re-subscribing silently");
+      await subscribe();
+      return;
     }
 
-    // Stale or missing subscription — show re-subscribe prompt after short delay
+    // Version mismatch — prompt the user to refresh their subscription
     setTimeout(() => {
       showNotifBanner("Tap Refresh to keep getting notifications");
       const btn = document.getElementById("notifEnableBtn");
@@ -162,10 +182,8 @@ document.addEventListener("DOMContentLoaded", () => {
 document.addEventListener("orbit:auth-ready", () => {
   if (!("Notification" in window)) return;
   if (Notification.permission !== "granted") {
-    // Not yet enabled — show the first-time banner unless dismissed
     if (!localStorage.getItem("orbit:notif-dismissed")) checkAndShowBanner();
   } else {
-    // Already enabled — silently check if subscription is stale
     checkForStaleSubscription();
   }
 });
@@ -176,15 +194,66 @@ export async function notifyUser(toUid, title, body, url = "/") {
   try {
     const snap = await getDoc(doc(db, "users", toUid));
     if (!snap.exists()) return;
+
     const subscription = snap.data().pushSubscription;
     if (!subscription) return;
 
-    await fetch("/api/send-notification", {
+    const res = await fetch("/api/send-notification", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ subscription, title, body, url }),
     });
+
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      // 410 = subscription expired — clear it so we stop trying
+      if (res.status === 410) {
+        await setDoc(doc(db, "users", toUid), { pushSubscription: null }, { merge: true });
+      }
+      console.warn("Orbit: send-notification failed", res.status, json);
+    }
   } catch (err) {
     console.warn("Orbit: notifyUser failed", err);
   }
 }
+
+// ── Send a test push to yourself — call this from the browser or a button ──
+export async function sendTestNotification() {
+  if (!state.uid) { showToastMsg("Not logged in"); return; }
+  try {
+    const snap = await getDoc(doc(db, "users", state.uid));
+    if (!snap.exists()) { showToastMsg("User doc not found"); return; }
+
+    const subscription = snap.data().pushSubscription;
+    if (!subscription) {
+      showToastMsg("No push subscription saved — tap Enable first");
+      return;
+    }
+
+    showToastMsg("Sending test notification…");
+
+    const res = await fetch("/api/send-notification", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subscription,
+        title: "Orbit test",
+        body: "If you see this, push notifications are working!",
+        url: "/",
+      }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+
+    if (res.ok) {
+      showToastMsg("Test sent! You should see a notification shortly.");
+    } else {
+      showToastMsg("Send failed: " + (json.error || res.status));
+    }
+  } catch (err) {
+    showToastMsg("Error: " + (err.message || err));
+  }
+}
+
+// Expose for quick testing from any button or the browser address bar
+window._orbitTestNotif = sendTestNotification;
