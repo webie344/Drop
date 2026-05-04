@@ -1,7 +1,7 @@
 // =========================================================================
-// Orbit — app.js  (updated: notifications route + new notification types)
+// Orbit — app.js
 // Firebase init + Auth + Cloudinary + Router + Feed + Reels + Groups +
-// Profile + Settings + Theme + Verified-by-location + Notifications view.
+// Profile + Settings + Theme + Verified-by-location.
 // Chat + DM logic lives in chat.js (it imports state from this file).
 // =========================================================================
 
@@ -32,6 +32,8 @@ export const firebaseConfig = {
 };
 
 // Cloudinary: get from https://cloudinary.com → Settings → Upload → Upload presets
+// 1) Create an UNSIGNED preset (recommended for client-side uploads)
+// 2) Put your cloud name + the preset name below
 export const cloudinaryConfig = {
   cloudName:    "ddtdqrh1b",
   uploadPreset: "profile-pictures",
@@ -46,13 +48,13 @@ export const db = getFirestore(app);
 
 // Globals shared with chat.js
 export const state = {
-  me: null,
-  uid: null,
-  chatsUnsub: null,
-  chatUnsub: null,
-  activeChat: null,
+  me: null,           // current user profile doc (from /users/{uid})
+  uid: null,          // current uid
+  chatsUnsub: null,   // unsubscribe for chats list listener
+  chatUnsub: null,    // unsubscribe for active chat messages listener
+  activeChat: null,   // currently open chat doc id
   cache: {
-    users: new Map(),
+    users: new Map(), // uid -> profile snapshot
   },
 };
 
@@ -188,10 +190,11 @@ export const uploadToCloudinary = async (file, kind = "image") => {
   const res = await fetch(url, { method: "POST", body: fd });
   if (!res.ok) throw new Error("Upload failed");
   const json = await res.json();
+  // Strip undefined fields — Firestore rejects them
   const out = { url: json.secure_url, publicId: json.public_id, type: kind };
   if (json.width)    out.width    = json.width;
   if (json.height)   out.height   = json.height;
-  if (json.duration) out.duration = json.duration;
+  if (json.duration) out.duration = json.duration; // only present for video
   return out;
 };
 
@@ -226,9 +229,9 @@ const ensureUserDoc = async (user, extras = {}) => {
       email: user.email || null,
       photoURL: user.photoURL || `https://api.dicebear.com/7.x/shapes/svg?seed=${user.uid}`,
       bio: "",
-      verified: false,
+      verified: false,                // becomes true after location grant
       verifiedAt: null,
-      location: null,
+      location: null,                 // { lat, lng, city }
       followers: [],
       following: [],
       themePref: "dark",
@@ -239,6 +242,7 @@ const ensureUserDoc = async (user, extras = {}) => {
     await setDoc(ref, profile);
     return profile;
   }
+  // mark online + lastSeen
   await updateDoc(ref, { online: true, lastSeen: serverTimestamp() });
   return { uid: user.uid, ...snap.data(), online: true };
 };
@@ -256,8 +260,9 @@ onAuthStateChanged(auth, async (user) => {
   startMyProfileListener();
   startNotifListener();
   startSuggestions();
-  router();
+  router(); // initial route
   watchOfflineOnUnload();
+  // Notify chat module
   document.dispatchEvent(new CustomEvent("orbit:auth-ready", { detail: state.me }));
 });
 
@@ -325,73 +330,69 @@ $("#signOutBtn").addEventListener("click", async () => {
 $("#themeToggle").addEventListener("click", toggleTheme);
 $("#themeAuthToggle")?.addEventListener("click", toggleTheme);
 
-// =========================================================================
-// NOTIFICATION HELPERS
-// =========================================================================
-
-// Build the human-readable push body string for each type
-const _notifBodyText = (type, extra = {}) => {
-  const name = extra.fromName || state.me?.name || "Someone";
-  switch (type) {
-    case "profile_view":  return `${name} viewed your profile`;
-    case "post_view":     return `${name} viewed your post`;
-    case "reel_view":     return `${name} watched your reel`;
-    case "comment":       return `${name} commented: ${(extra.text || "").slice(0, 60)}`;
-    case "reel_comment":  return `${name} commented on your reel: ${(extra.text || "").slice(0, 60)}`;
-    case "orbit":         return `${name} orbited your post`;
-    case "follow":        return `${name} started following you`;
-    case "message":       return `${name} sent you a message`;
-    case "experience":    return `${name} replied to your experience`;
-    default:              return `${name} sent you a notification`;
-  }
-};
-
-// Write a Firestore notif record AND fire a push — never notifies yourself
+// -- Notification helpers --
 export const writeNotif = async (toUid, type, data = {}) => {
   if (!toUid || toUid === state.uid) return;
-  const item = {
-    type, ...data,
-    fromUid: state.uid,
-    fromName: state.me?.name || "",
-    fromAvatar: state.me?.photoURL || "",
-    read: false,
-    createdAt: serverTimestamp(),
-  };
   try {
-    await addDoc(collection(db, "notifications", toUid, "items"), item);
+    await addDoc(collection(db, "notifications", toUid, "items"), {
+      type, ...data, fromUid: state.uid,
+      fromName: state.me?.name || "", fromAvatar: state.me?.photoURL || "",
+      read: false, createdAt: serverTimestamp(),
+    });
   } catch {}
-  // Fire push notification (best-effort, non-blocking)
-  import("./notifications.js").then(({ notifyUser }) => {
-    notifyUser(toUid, "Orbit", _notifBodyText(type, { ...data, fromName: state.me?.name || "Someone" }), "/");
-  }).catch(() => {});
 };
-
-// Unread badge — update both topbar pill and sidebar pill
 let _notifUnsub = null;
 const startNotifListener = () => {
   if (_notifUnsub) _notifUnsub();
   _notifUnsub = onSnapshot(
     query(collection(db, "notifications", state.uid, "items"), where("read", "==", false), limit(99)),
-    (snap) => {
-      const n = snap.size;
-      const pill  = $("#notifPill");
-      const pill2 = $("#notifPillSidebar");
-      if (pill)  { pill.textContent  = n > 99 ? "99+" : String(n); pill.hidden  = n === 0; }
-      if (pill2) { pill2.textContent = n > 99 ? "99+" : String(n); pill2.hidden = n === 0; }
-    }, () => {}
+    (snap) => { const pill = $("#notifPill"); if (!pill) return; const n = snap.size; pill.textContent = n > 99 ? "99+" : String(n); pill.hidden = n === 0; }, () => {}
   );
 };
-
-// Bell button → navigate to notifications route (no more dropdown panel)
-$("#notifBtn").addEventListener("click", (e) => {
-  e.stopPropagation();
-  location.hash = "#notifications";
-});
+// -- Notification bell --
+const toggleNotifPanel = () => {
+  const existing = $("#notifPanel");
+  if (existing) { existing.remove(); return; }
+  const panel = el("div", { class: "notif-panel", id: "notifPanel" });
+  panel.appendChild(el("div", { class: "np-head" }, el("span", { text: "Notifications" }),
+    el("button", { class: "icon-btn", style: "width:30px;height:30px;", onclick: () => panel.remove() }, el("i", { class: "ri-close-line" }))));
+  getDocs(query(collection(db, "notifications", state.uid, "items"), orderBy("createdAt", "desc"), limit(30)))
+  .then((snap) => {
+    if (snap.empty) { panel.appendChild(el("div", { class: "notif-empty" }, "No notifications yet.")); return; }
+    const iconMap = { orbit:"ri-fire-fill", follow:"ri-user-follow-fill", message:"ri-chat-1-fill", comment:"ri-chat-4-fill", experience:"ri-sparkling-fill" };
+    const colMap  = { orbit:"var(--grad-2)", follow:"var(--primary)", message:"var(--good)", comment:"var(--grad-3)", experience:"var(--grad-1)" };
+    snap.docs.forEach((d) => {
+      const n = { id: d.id, ...d.data() };
+      const ic = iconMap[n.type] || "ri-notification-3-fill";
+      const co = colMap[n.type]  || "var(--primary)";
+      const txt = n.text || (n.fromName || "Someone") + " " + ({ orbit:"orbited your post", follow:"followed you", message:"sent you a message", experience:"replied to your experience" }[n.type] || "interacted");
+      const item = el("div", { class: "notif-item" + (n.read ? "" : " unread") },
+        el("i", { class: ic, style: "color:" + co + ";font-size:20px;flex-shrink:0;margin-top:2px;" }),
+        el("div", { style: "min-width:0;" }, el("div", { class: "ni-text" }, txt), el("div", { class: "ni-time" }, fmtTime(n.createdAt))),
+      );
+      item.addEventListener("click", () => {
+        updateDoc(doc(db, "notifications", state.uid, "items", n.id), { read: true }).catch(() => {});
+        panel.remove();
+        if (n.type === "message" && n.fromUid) location.hash = "#chats/" + n.fromUid;
+        else if (n.type === "follow"  && n.fromUid) location.hash = "#profile/" + n.fromUid;
+        else location.hash = "#feed";
+      });
+      panel.appendChild(item);
+    });
+    snap.docs.filter((d) => !d.data().read).forEach((d) => updateDoc(doc(db, "notifications", state.uid, "items", d.id), { read: true }).catch(() => {}));
+  }).catch(() => panel.appendChild(el("div", { class: "notif-empty" }, "Could not load notifications.")));
+  document.body.appendChild(panel);
+  setTimeout(() => document.addEventListener("click", function once(e) {
+    if (!panel.contains(e.target) && e.target !== $("#notifBtn")) panel.remove();
+    else document.addEventListener("click", once, { once: true });
+  }, { once: true }), 50);
+};
+$("#notifBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleNotifPanel(); });
 
 // =========================================================================
 // 7. ROUTER
 // =========================================================================
-const routes = ["feed", "reels", "chats", "groups", "explore", "saved", "settings", "profile", "post", "profile-u", "notifications"];
+const routes = ["feed", "reels", "chats", "groups", "explore", "saved", "settings", "profile", "post", "profile-u"];
 
 // Track feed scroll so "back from post" returns to same position
 let _feedScrollY = 0;
@@ -404,6 +405,7 @@ const router = () => {
   $$(".nav-item, .bn").forEach((b) => b.classList.toggle("active", b.dataset.route === target));
 
   const content = $("#content");
+  // Save scroll before leaving feed
   if (content._currentRoute === "feed") {
     _feedScrollY = content.querySelector(".feed-wrap")?.parentElement?.scrollTop || 0;
   }
@@ -411,17 +413,16 @@ const router = () => {
   content._currentRoute = target;
 
   switch (target) {
-    case "feed":          renderFeed(content, _feedScrollY); _feedScrollY = 0; break;
-    case "reels":         renderReels(content); break;
-    case "chats":         document.dispatchEvent(new CustomEvent("orbit:open-chats", { detail: { peerUid: rest[0] || null } })); break;
-    case "groups":        renderGroups(content); break;
-    case "explore":       renderExplore(content, rest[0] === "tag" ? rest[1] : null); break;
-    case "saved":         renderSaved(content); break;
-    case "settings":      renderSettings(content); break;
-    case "profile":       renderProfile(content, rest[0] || state.uid); break;
-    case "profile-u":     renderProfileByUsername(content, rest[0]); break;
-    case "post":          renderPostDetail(content, rest[0]); break;
-    case "notifications": renderNotifications(content); break;
+    case "feed":       renderFeed(content, _feedScrollY); _feedScrollY = 0; break;
+    case "reels":      renderReels(content); break;
+    case "chats":      document.dispatchEvent(new CustomEvent("orbit:open-chats", { detail: { peerUid: rest[0] || null } })); break;
+    case "groups":     renderGroups(content); break;
+    case "explore":    renderExplore(content, rest[0] === "tag" ? rest[1] : null); break;
+    case "saved":      renderSaved(content); break;
+    case "settings":   renderSettings(content); break;
+    case "profile":    renderProfile(content, rest[0] || state.uid); break;
+    case "profile-u":  renderProfileByUsername(content, rest[0]); break;
+    case "post":       renderPostDetail(content, rest[0]); break;
   }
 };
 window.addEventListener("hashchange", router);
@@ -441,6 +442,7 @@ const closeMobileSidebar = () => {
 };
 $("#openSidebar")?.addEventListener("click", openMobileSidebar);
 $("#sidebarBackdrop").addEventListener("click", closeMobileSidebar);
+// Close sidebar when a nav item is tapped on mobile
 $$(".nav-item, .sidebar-foot .link").forEach((b) =>
   b.addEventListener("click", () => { if (window.innerWidth <= 640) closeMobileSidebar(); })
 );
@@ -457,6 +459,7 @@ const renderFeed = (root, restoreScrollY = 0) => {
   );
   wrap.appendChild(stub);
 
+  // Trending lane container (filled later)
   const trendingLane = el("div", { class: "trending-lane hidden" });
   trendingLane.appendChild(el("div", { class: "trending-head" },
     el("i", { class: "ri-fire-fill" }), "Trending in your orbit"
@@ -465,6 +468,7 @@ const renderFeed = (root, restoreScrollY = 0) => {
   trendingLane.appendChild(trendingScroller);
   wrap.appendChild(trendingLane);
 
+  // Posts container
   const list = el("div", { class: "feed-list" });
   list.appendChild(el("div", { class: "empty" },
     el("i", { class: "ri-loader-4-line" }),
@@ -491,9 +495,11 @@ const renderFeed = (root, restoreScrollY = 0) => {
     }
 
     const posts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    // resolve authors
     const authors = await Promise.all([...new Set(posts.map((p) => p.authorUid))].map(fetchUser));
     const byUid = Object.fromEntries(authors.filter(Boolean).map((u) => [u.uid, u]));
 
+    // Trending = top 5 by orbitCount with at least 3 orbits
     const trending = [...posts].filter((p) => (p.orbitCount || 0) >= 3)
       .sort((a, b) => (b.orbitCount || 0) - (a.orbitCount || 0)).slice(0, 5);
     if (trending.length) {
@@ -508,6 +514,7 @@ const renderFeed = (root, restoreScrollY = 0) => {
       const _rs = await getDocs(query(collection(db, "reels"), orderBy("createdAt", "desc"), limit(6)));
       _inlineReels = _rs.docs.map((d) => ({ id: d.id, ...d.data() }));
     } catch {}
+    // Algorithm: score posts by affinity (following > hashtag match > engagement > recency)
     const _following = state.me?.following || [];
     const _interests = state.me?.interests || [];
     const _scored = posts.map((p) => {
@@ -527,6 +534,7 @@ const renderFeed = (root, restoreScrollY = 0) => {
       }
     });
 
+    // Restore scroll position after coming back from a post
     if (restoreScrollY > 0) {
       requestAnimationFrame(() => { root.scrollTop = restoreScrollY; restoreScrollY = 0; });
     }
@@ -542,11 +550,12 @@ const renderFeed = (root, restoreScrollY = 0) => {
     snap.docs.forEach((d) => { const ex = { id: d.id, ...d.data() }; _sc.appendChild(renderExperienceMiniCard(ex, _em[ex.authorUid])); });
     wrap.insertBefore(_eb, list);
   }).catch(() => {});
+  // store unsub on root so route changes clean up
   root._unsub = unsub;
 };
 
 const renderTrendingCard = (p, author) => {
-  return el("div", { class: "trending-card", onclick: () => location.hash = `#feed` },
+  return el("div", { class: "trending-card", onclick: () => location.hash = `#feed` /* stays; could open detail */ },
     el("div", { class: "t-head" },
       el("img", { class: "avatar xs", src: avatarFor(author) }),
       el("div", { class: "t-name" }, author?.name || "User"),
@@ -559,19 +568,26 @@ const renderTrendingCard = (p, author) => {
   );
 };
 
+// Build a media carousel node for an array of media objects (or single obj)
 const renderMediaCarousel = (mediaRaw) => {
   const items = Array.isArray(mediaRaw) ? mediaRaw : (mediaRaw ? [mediaRaw] : []);
   if (!items.length) return null;
   if (items.length === 1) {
     const m = items[0];
-    if (m.type === "video") return el("div", { class: "post-media" }, buildVideoPlayer(m.url));
+    if (m.type === "video") {
+      return el("div", { class: "post-media" }, buildVideoPlayer(m.url));
+    }
     return el("div", { class: "post-media" }, el("img", { src: m.url, loading: "lazy" }));
   }
+  // Multiple — simple slider
   let cur = 0;
   const slides = items.map((m, i) => {
     const slide = el("div", { class: "carousel-slide", style: i === 0 ? "" : "display:none;" });
-    if (m.type === "video") slide.appendChild(buildVideoPlayer(m.url));
-    else slide.appendChild(el("img", { src: m.url, loading: "lazy" }));
+    if (m.type === "video") {
+      slide.appendChild(buildVideoPlayer(m.url));
+    } else {
+      slide.appendChild(el("img", { src: m.url, loading: "lazy" }));
+    }
     return slide;
   });
   const dotsWrap = el("div", { class: "carousel-dots" });
@@ -589,7 +605,8 @@ const renderMediaCarousel = (mediaRaw) => {
     el("i", { class: "ri-arrow-left-s-line" }));
   const next = el("button", { class: "carousel-arrow right", onclick: (e) => { e.stopPropagation(); go(cur + 1); }},
     el("i", { class: "ri-arrow-right-s-line" }));
-  return el("div", { class: "post-media carousel" }, ...slides, prev, next, dotsWrap);
+  const wrap = el("div", { class: "post-media carousel" }, ...slides, prev, next, dotsWrap);
+  return wrap;
 };
 
 const renderPost = (p, author, opts = {}) => {
@@ -630,6 +647,9 @@ const renderPost = (p, author, opts = {}) => {
         }).catch(() => {});
         if (_isFollowing) {
           writeNotif(author.uid, "follow", {}).catch(() => {});
+          import("./notifications.js").then(({ notifyUser }) =>
+            notifyUser(author.uid, state.me?.name || "Someone", "started following you", "/#profile/" + state.uid)
+          ).catch(() => {});
         }
         if (state.me) { state.me.following = _isFollowing ? [...(state.me.following||[]), author.uid] : (state.me.following||[]).filter((x)=>x!==author.uid); }
       });
@@ -651,9 +671,11 @@ const renderPost = (p, author, opts = {}) => {
     post.appendChild(body);
   }
 
+  // Media (single or carousel)
   const carousel = renderMediaCarousel(p.media);
   if (carousel) post.appendChild(carousel);
 
+  // Actions row
   const orbitIcon = el("i", { class: iOrbited ? "ri-fire-fill" : "ri-fire-line" });
   const orbitCount = el("span", { text: String(p.orbitCount || 0) });
   let _iOrbited = iOrbited;
@@ -674,7 +696,7 @@ const renderPost = (p, author, opts = {}) => {
   const actions = el("div", { class: "post-actions" },
     el("button", { class: "post-act", onclick: (e) => { e.stopPropagation(); location.hash = `#post/${p.id}`; }},
       el("i", { class: "ri-chat-1-line" }),
-      "Comment",
+      String(p.commentCount || 0),
     ),
     el("button", { class: "post-act", onclick: async (e) => {
       e.stopPropagation();
@@ -693,6 +715,7 @@ const renderPost = (p, author, opts = {}) => {
   post.appendChild(actions);
 
   if (!hideComments) {
+    // Comments preview (top 2)
     const cBox = el("div", { class: "comments hidden" });
     post.appendChild(cBox);
 
@@ -707,6 +730,7 @@ const renderPost = (p, author, opts = {}) => {
       const text = input.value.trim();
       if (!text) return;
       input.value = "";
+      // Optimistic UI — show comment instantly without waiting for Firestore
       cBox.classList.remove("hidden");
       cBox.appendChild(el("div", { class: "comment" },
         el("img", { class: "avatar xs", src: avatarFor(state.me) }),
@@ -719,10 +743,6 @@ const renderPost = (p, author, opts = {}) => {
         text, authorUid: state.uid, createdAt: serverTimestamp(),
       });
       await updateDoc(doc(db, "posts", p.id), { commentCount: increment(1) });
-      // Notify post author
-      if (p.authorUid && p.authorUid !== state.uid) {
-        writeNotif(p.authorUid, "comment", { text }).catch(() => {});
-      }
     });
     post.appendChild(cForm);
 
@@ -776,13 +796,10 @@ const renderPostDetail = async (root, postId) => {
   const p = { id: snap.id, ...snap.data() };
   const author = await fetchUser(p.authorUid);
 
-  // Notify post author that someone viewed their post (not yourself)
-  if (p.authorUid && p.authorUid !== state.uid) {
-    writeNotif(p.authorUid, "post_view", {}).catch(() => {});
-  }
-
+  // Render the post card (no inline comment form — we show all comments below)
   root.appendChild(renderPost(p, author, { hideComments: true }));
 
+  // Full comments section
   const cmtSection = el("div", { class: "detail-comments" });
   root.appendChild(cmtSection);
 
@@ -832,10 +849,6 @@ const renderPostDetail = async (root, postId) => {
       text, authorUid: state.uid, createdAt: serverTimestamp(),
     });
     await updateDoc(doc(db, "posts", p.id), { commentCount: increment(1) });
-    // Notify post author
-    if (p.authorUid && p.authorUid !== state.uid) {
-      writeNotif(p.authorUid, "comment", { text }).catch(() => {});
-    }
   });
   cmtSection.appendChild(cForm);
 };
@@ -848,7 +861,8 @@ const toggleSave = async (postId) => {
 };
 
 // =========================================================================
-// 9. REELS — TikTok-style with reel_view notifications + autoplay
+// 9. REELS — load once (no snapshot re-render), in-place DOM updates,
+//            TikTok-style comments slide-up, intersection autoplay
 // =========================================================================
 const renderReels = async (root) => {
   const wrap = el("div", { class: "reels-wrap" });
@@ -885,26 +899,31 @@ const renderReels = async (root) => {
   wrap.innerHTML = "";
   reels.forEach((r) => wrap.appendChild(renderReel(r, map[r.authorUid])));
 
+  // Map video → Audio track so IntersectionObserver can control both
   const _reelAudioMap = new WeakMap();
-  // Map video → reel data for notification tracking
-  const _reelDataMap = new WeakMap();
-  // Track which reel IDs we've already sent a reel_view for this session
-  const _viewedReelIds = new Set();
-
+  wrap.querySelectorAll(".reel").forEach((reelEl) => {
+    const vid = reelEl.querySelector("video");
+    const badge = reelEl.querySelector(".reel-music-badge");
+    if (badge) {
+      const trackUrl = badge._trackUrl; // set below
+      if (trackUrl) {
+        const aud = new Audio(trackUrl);
+        aud.loop = true; aud.volume = 0.6;
+        _reelAudioMap.set(vid, aud);
+      }
+    }
+  });
+  // Stash track URL on the badge element so the map can find it
   wrap.querySelectorAll(".reel-music-badge").forEach((badge, i) => {
     const reelEl = badge.closest(".reel");
     const vid = reelEl?.querySelector("video");
+    // Find the reel data by index to get music URL
     const reelData = reels[i];
     if (reelData?.music?.url && vid) {
       const aud = new Audio(reelData.music.url);
       aud.loop = true; aud.volume = 0.6;
       _reelAudioMap.set(vid, aud);
     }
-  });
-
-  // Attach reel data to each video for notification lookups
-  wrap.querySelectorAll("video").forEach((vid, i) => {
-    if (reels[i]) _reelDataMap.set(vid, reels[i]);
   });
 
   let _currentAudio = null;
@@ -919,12 +938,6 @@ const renderReels = async (root) => {
           _currentAudio = aud;
           aud.play().catch(() => {});
         }
-        // Fire reel_view notification once per reel per session
-        const rData = _reelDataMap.get(v);
-        if (rData && rData.authorUid && rData.authorUid !== state.uid && !_viewedReelIds.has(rData.id)) {
-          _viewedReelIds.add(rData.id);
-          writeNotif(rData.authorUid, "reel_view", {}).catch(() => {});
-        }
       } else {
         if (!v.paused) v.pause();
         if (aud) { aud.pause(); aud.currentTime = 0; if (_currentAudio === aud) _currentAudio = null; }
@@ -935,6 +948,7 @@ const renderReels = async (root) => {
 };
 
 const renderReel = (r, author) => {
+  // Track liked state client-side to avoid re-render
   let liked = (r.likes || []).includes(state.uid);
   let likeCount = r.likeCount || 0;
   let commentCount = r.commentCount || 0;
@@ -959,7 +973,7 @@ const renderReel = (r, author) => {
   }, likeIcon, likeNum);
 
   const cmtBtn = el("button", { class: "reel-act",
-    onclick: (e) => { e.stopPropagation(); openReelComments(r.id, cmtNum, r.authorUid); }
+    onclick: (e) => { e.stopPropagation(); openReelComments(r.id, cmtNum); }
   }, el("i", { class: "ri-chat-bubble-line" }), cmtNum);
 
   const shareBtn = el("button", { class: "reel-act",
@@ -975,6 +989,7 @@ const renderReel = (r, author) => {
     onclick: (e) => { e.stopPropagation(); e.target.muted = !e.target.muted; }
   });
 
+  // Follow button for reel author
   let _reelFollowing = (state.me?.following || []).includes(author?.uid);
   const reelFollowBtn = r.authorUid !== state.uid ? (() => {
     const btn = el("button", { class: `reel-follow-btn${_reelFollowing ? " following" : ""}` },
@@ -988,12 +1003,16 @@ const renderReel = (r, author) => {
       await updateDoc(doc(db, "users", author.uid), { followers: _reelFollowing ? arrayUnion(state.uid) : arrayRemove(state.uid) }).catch(() => {});
       if (_reelFollowing) {
         writeNotif(author.uid, "follow", {}).catch(() => {});
+        import("./notifications.js").then(({ notifyUser }) =>
+          notifyUser(author.uid, state.me?.name || "Someone", "started following you", "/#profile/" + state.uid)
+        ).catch(() => {});
       }
       if (state.me) { state.me.following = _reelFollowing ? [...(state.me.following||[]), author.uid] : (state.me.following||[]).filter((x)=>x!==author.uid); }
     });
     return btn;
   })() : null;
 
+  // Music badge for this reel (if it was uploaded with music)
   const musicBadgeEl = r.music?.name
     ? el("div", { class: "reel-music-badge" }, el("i", { class: "ri-music-2-line" }), " " + r.music.name + " — " + (r.music.artist || ""))
     : null;
@@ -1017,7 +1036,8 @@ const renderReel = (r, author) => {
 };
 
 // TikTok-style slide-up comments for a reel
-const openReelComments = (reelId, cmtNumEl, reelAuthorUid = null) => {
+const openReelComments = (reelId, cmtNumEl) => {
+  // Remove any existing
   $("#reelCommentsSheet")?.remove();
 
   const sheet = el("div", { class: "reel-cmt-sheet", id: "reelCommentsSheet" });
@@ -1036,20 +1056,21 @@ const openReelComments = (reelId, cmtNumEl, reelAuthorUid = null) => {
       el("img", { class: "avatar xs", src: avatarFor(state.me) }),
       el("input", { type: "text", id: "reelCmtInput", placeholder: "Add a comment…" }),
       el("button", { class: "icon-btn", id: "reelCmtSend",
-        onclick: () => submitReelComment(reelId, cmtNumEl, reelAuthorUid),
+        onclick: () => submitReelComment(reelId, cmtNumEl),
       }, el("i", { class: "ri-send-plane-fill", style: "color:var(--primary);" })),
     ),
   );
 
   const reelCmtInput = inner.querySelector("#reelCmtInput");
   reelCmtInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") submitReelComment(reelId, cmtNumEl, reelAuthorUid);
+    if (e.key === "Enter") submitReelComment(reelId, cmtNumEl);
   });
 
   sheet.appendChild(backdrop);
   sheet.appendChild(inner);
   document.body.appendChild(sheet);
 
+  // Load comments live
   const listEl = inner.querySelector(`#reelCmtList_${reelId}`);
   const unsub = onSnapshot(
     query(collection(db, "reels", reelId, "comments"), orderBy("createdAt", "asc"), limit(100)),
@@ -1099,13 +1120,14 @@ const openReelComments = (reelId, cmtNumEl, reelAuthorUid = null) => {
       listEl.scrollTop = listEl.scrollHeight;
     });
 
+  // Clean up listener when sheet is removed
   const mo = new MutationObserver(() => {
     if (!document.body.contains(sheet)) { unsub(); mo.disconnect(); }
   });
   mo.observe(document.body, { childList: true });
 };
 
-const submitReelComment = async (reelId, cmtNumEl, reelAuthorUid = null) => {
+const submitReelComment = async (reelId, cmtNumEl) => {
   const input = $("#reelCmtInput");
   const text = (input?.value || "").trim();
   if (!text) return;
@@ -1121,10 +1143,6 @@ const submitReelComment = async (reelId, cmtNumEl, reelAuthorUid = null) => {
       cmtNumEl.textContent = String(parseInt(cmtNumEl.textContent || "0") + 1);
     }
     delete input.dataset.replyTo;
-    // Notify reel author
-    if (reelAuthorUid && reelAuthorUid !== state.uid) {
-      writeNotif(reelAuthorUid, "reel_comment", { text }).catch(() => {});
-    }
   } catch (err) {
     toast("Couldn't post comment");
   }
@@ -1199,6 +1217,7 @@ const renderExplore = (root, hashtagFilter = null) => {
   const grid = el("div", { class: "grid-3" });
   root.appendChild(grid);
 
+  // No compound orderBy on hashtag queries — sort client-side to avoid composite index
   const baseQ = hashtagFilter
     ? query(collection(db, "posts"), where("hashtags", "array-contains", hashtagFilter.toLowerCase()), limit(60))
     : query(collection(db, "posts"), orderBy("orbitCount", "desc"), limit(60));
@@ -1211,6 +1230,7 @@ const renderExplore = (root, hashtagFilter = null) => {
         el("div", { class: "t" }, hashtagFilter ? `No posts tagged #${hashtagFilter}` : "Nothing to explore yet")));
       return;
     }
+    // Client-side sort for hashtag queries (no compound index needed)
     const docs = [...snap.docs].sort((a, b) => {
       if (hashtagFilter) return (b.data().createdAt?.seconds || 0) - (a.data().createdAt?.seconds || 0);
       return (b.data().orbitCount || 0) - (a.data().orbitCount || 0);
@@ -1271,11 +1291,6 @@ const renderProfile = async (root, uid) => {
   const isMe = uid === state.uid;
   const iFollow = (state.me.following || []).includes(uid);
 
-  // Notify profile owner that someone viewed their profile (not yourself)
-  if (!isMe) {
-    writeNotif(uid, "profile_view", {}).catch(() => {});
-  }
-
   root.appendChild(el("div", { class: "profile-head" },
     el("img", { class: "avatar xl", src: avatarFor(u) }),
     el("div", {},
@@ -1300,7 +1315,6 @@ const renderProfile = async (root, uid) => {
               } else {
                 batch.update(meRef, { following: arrayUnion(uid) });
                 batch.update(themRef, { followers: arrayUnion(state.uid) });
-                writeNotif(uid, "follow", {}).catch(() => {});
               }
               await batch.commit();
               router();
@@ -1324,11 +1338,13 @@ const renderProfile = async (root, uid) => {
 
   const renderTab = async (which) => {
     body.innerHTML = "";
+    // Show loading state
     body.appendChild(el("div", { class: "empty" },
       el("i", { class: "ri-loader-4-line", style: "animation:spin 1s linear infinite;" }),
       el("div", { class: "t" }, "Loading…")));
 
     if (which === "posts") {
+      // No orderBy — avoid composite index requirement; sort client-side
       const snap = await getDocs(
         query(collection(db, "posts"), where("authorUid", "==", uid), limit(60))
       ).catch(() => null);
@@ -1343,6 +1359,7 @@ const renderProfile = async (root, uid) => {
       const profFeed = el("div", { class: "profile-feed-list" }); body.appendChild(profFeed);
       posts.forEach((p) => profFeed.appendChild(renderPost(p, u)));
     } else if (which === "reels") {
+      // No orderBy — avoid composite index requirement; sort client-side
       const snap = await getDocs(
         query(collection(db, "reels"), where("authorUid", "==", uid), limit(30))
       ).catch(() => null);
@@ -1402,7 +1419,7 @@ const renderProfileByUsername = async (root, username) => {
 };
 
 // =========================================================================
-// 13. SETTINGS
+// 13. SETTINGS — theme, verification, notifications
 // =========================================================================
 const renderSettings = (root) => {
   const wrap = el("div", { class: "settings" },
@@ -1447,17 +1464,11 @@ const renderSettings = (root) => {
       el("div", { class: "row" },
         el("div", { class: "label" },
           el("div", { class: "t" }, "Browser notifications"),
-          el("div", { class: "d" }, "Get pings for new messages, comments, and more.")),
+          el("div", { class: "d" }, "Get pings for new messages and Orbits.")),
         el("button", { class: "btn ghost", onclick: async () => {
           const p = await Notification.requestPermission();
           toast(p === "granted" ? "Notifications enabled" : "Notifications denied");
         }}, "Enable"),
-      ),
-      el("div", { class: "row" },
-        el("div", { class: "label" },
-          el("div", { class: "t" }, "View notification history"),
-          el("div", { class: "d" }, "See all your past notifications in one place.")),
-        el("button", { class: "btn ghost", onclick: () => location.hash = "#notifications" }, "View all"),
       ),
     ),
 
@@ -1484,6 +1495,7 @@ const renderSettings = (root) => {
   root.appendChild(wrap);
 };
 
+// Verification by location (one-time geolocation)
 const requestLocationVerification = () => {
   if (!("geolocation" in navigator)) { toast("Location not available on this device"); return; }
   toast("Requesting location…");
@@ -1508,165 +1520,7 @@ const requestLocationVerification = () => {
 };
 
 // =========================================================================
-// 13b. NOTIFICATIONS VIEW (full-page, replaces dropdown panel)
-// =========================================================================
-const renderNotifications = (root) => {
-  const wrap = el("div", { class: "notif-view" });
-
-  const head = el("div", { class: "notif-view-head" },
-    el("h2", {}, "Notifications"),
-    el("button", { class: "notif-view-mark-all", onclick: async () => {
-      const q2 = query(collection(db, "notifications", state.uid, "items"), where("read", "==", false), limit(99));
-      const snap2 = await getDocs(q2).catch(() => null);
-      if (!snap2 || snap2.empty) { toast("All caught up!"); return; }
-      const batch = writeBatch(db);
-      snap2.docs.forEach((d) => batch.update(doc(db, "notifications", state.uid, "items", d.id), { read: true }));
-      await batch.commit().catch(() => {});
-      toast("Marked all as read");
-    }}, "Mark all read"),
-  );
-  wrap.appendChild(head);
-
-  // Skeleton while loading
-  const skeletons = [1,2,3,4].map(() =>
-    el("div", { class: "notif-skeleton" },
-      el("div", { class: "notif-skel-circle" }),
-      el("div", { class: "notif-skel-lines" },
-        el("div", { class: "notif-skel-line" }),
-        el("div", { class: "notif-skel-line short" }),
-      ),
-    )
-  );
-  skeletons.forEach((s) => wrap.appendChild(s));
-  root.appendChild(wrap);
-
-  const iconMap = {
-    orbit:        "ri-fire-fill",
-    follow:       "ri-user-follow-fill",
-    message:      "ri-chat-1-fill",
-    comment:      "ri-chat-4-fill",
-    reel_comment: "ri-chat-bubble-fill",
-    experience:   "ri-sparkling-fill",
-    profile_view: "ri-eye-fill",
-    post_view:    "ri-image-fill",
-    reel_view:    "ri-play-fill",
-  };
-  const colClass = {
-    orbit:        "ntb-orbit",
-    follow:       "ntb-follow",
-    message:      "ntb-message",
-    comment:      "ntb-comment",
-    reel_comment: "ntb-reel_comment",
-    experience:   "ntb-experience",
-    profile_view: "ntb-profile_view",
-    post_view:    "ntb-post_view",
-    reel_view:    "ntb-reel_view",
-  };
-  const labelMap = {
-    orbit:        (n) => `${n.fromName || "Someone"} orbited your post`,
-    follow:       (n) => `${n.fromName || "Someone"} started following you`,
-    message:      (n) => `${n.fromName || "Someone"} sent you a message`,
-    comment:      (n) => `${n.fromName || "Someone"} commented: "${(n.text || "").slice(0, 60)}"`,
-    reel_comment: (n) => `${n.fromName || "Someone"} commented on your reel: "${(n.text || "").slice(0, 60)}"`,
-    experience:   (n) => `${n.fromName || "Someone"} replied to your experience`,
-    profile_view: (n) => `${n.fromName || "Someone"} viewed your profile`,
-    post_view:    (n) => `${n.fromName || "Someone"} viewed your post`,
-    reel_view:    (n) => `${n.fromName || "Someone"} watched your reel`,
-  };
-  const destMap = {
-    follow:       (n) => n.fromUid ? `#profile/${n.fromUid}` : "#feed",
-    message:      (n) => n.fromUid ? `#chats/${n.fromUid}` : "#chats",
-    comment:      (n) => n.postId  ? `#post/${n.postId}`   : "#feed",
-    reel_comment: (n) => "#reels",
-    orbit:        (n) => n.postId  ? `#post/${n.postId}`   : "#feed",
-    profile_view: (n) => n.fromUid ? `#profile/${n.fromUid}` : "#feed",
-    post_view:    (n) => "#feed",
-    reel_view:    (n) => "#reels",
-    experience:   (n) => "#feed",
-  };
-
-  const q = query(
-    collection(db, "notifications", state.uid, "items"),
-    orderBy("createdAt", "desc"),
-    limit(60),
-  );
-
-  onSnapshot(q, async (snap) => {
-    // Remove skeletons / previous items
-    skeletons.forEach((s) => s.remove());
-    // Remove all existing notif rows (re-render on each snapshot)
-    wrap.querySelectorAll(".notif-row, .notif-section-label, .notif-view-empty").forEach((el) => el.remove());
-
-    if (snap.empty) {
-      wrap.appendChild(el("div", { class: "notif-view-empty" },
-        el("i", { class: "ri-notification-off-line" }),
-        el("div", { class: "t" }, "No notifications yet"),
-        el("p", {}, "When people interact with your posts, reels, or profile, you'll see it here."),
-      ));
-      return;
-    }
-
-    const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-
-    // Load sender avatars
-    const uids = [...new Set(items.map((n) => n.fromUid).filter(Boolean))];
-    const senders = await Promise.all(uids.map(fetchUser));
-    const senderMap = Object.fromEntries(senders.filter(Boolean).map((u) => [u.uid, u]));
-
-    // Section dividers — Today vs Older
-    const now = new Date();
-    let shownToday = false, shownOlder = false;
-
-    items.forEach((n) => {
-      const ts = n.createdAt?.toDate ? n.createdAt.toDate() : (n.createdAt ? new Date(n.createdAt) : null);
-      const isToday = ts && ts.toDateString() === now.toDateString();
-
-      if (isToday && !shownToday) {
-        shownToday = true;
-        wrap.appendChild(el("div", { class: "notif-section-label" }, "Today"));
-      } else if (!isToday && !shownOlder) {
-        shownOlder = true;
-        wrap.appendChild(el("div", { class: "notif-section-label" }, "Earlier"));
-      }
-
-      const sender = senderMap[n.fromUid];
-      const ic  = iconMap[n.type]   || "ri-notification-3-fill";
-      const cc  = colClass[n.type]  || "ntb-default";
-      const txt = labelMap[n.type]  ? labelMap[n.type](n) : `${n.fromName || "Someone"} interacted`;
-      const dest = destMap[n.type]  ? destMap[n.type](n) : "#feed";
-
-      const row = el("div", { class: `notif-row${n.read ? "" : " unread"}` },
-        el("div", { class: "notif-icon-wrap" },
-          el("img", { src: avatarFor(sender || { uid: n.fromUid }), alt: "" }),
-          el("div", { class: `notif-type-badge ${cc}` }, el("i", { class: ic })),
-        ),
-        el("div", { class: "notif-row-body" },
-          el("div", { class: "notif-row-text" }, txt),
-          el("div", { class: "notif-row-time" }, fmtTime(n.createdAt)),
-        ),
-      );
-
-      row.addEventListener("click", async () => {
-        if (!n.read) {
-          updateDoc(doc(db, "notifications", state.uid, "items", n.id), { read: true }).catch(() => {});
-        }
-        location.hash = dest;
-      });
-
-      wrap.appendChild(row);
-    });
-
-    // Mark all as read silently after 1 second
-    setTimeout(() => {
-      items.filter((n) => !n.read).forEach((n) => {
-        updateDoc(doc(db, "notifications", state.uid, "items", n.id), { read: true }).catch(() => {});
-      });
-    }, 1000);
-  });
-};
-
-// =========================================================================
-// 14. COMPOSE MODAL
+// 14. COMPOSE MODAL — posts, reels, groups
 // =========================================================================
 const composeModal = $("#composeModal");
 const openCompose = (which = "post") => {
@@ -1687,6 +1541,7 @@ document.addEventListener("click", (e) => {
   }
 });
 
+// Post media — up to 3 files (images or one video)
 let postFiles = [];
 const MAX_POST_FILES = 3;
 
@@ -1735,6 +1590,7 @@ $("#postMedia").addEventListener("change", (e) => {
   const files = Array.from(e.target.files || []);
   for (const file of files) {
     if (postFiles.length >= MAX_POST_FILES) break;
+    // Only allow 1 video
     if (file.type.startsWith("video/") && postFiles.some((f) => f.type.startsWith("video/"))) {
       toast("Only one video per post"); continue;
     }
@@ -2002,6 +1858,7 @@ document.getElementById("clearMusicBtn")?.addEventListener("click", () => {
 // 15. SUGGESTIONS + TRENDING right rail
 // =========================================================================
 const startSuggestions = () => {
+  // Suggested users (latest accounts I don't follow)
   onSnapshot(query(collection(db, "users"), orderBy("createdAt", "desc"), limit(8)), (snap) => {
     const list = $("#suggestList"); if (!list) return;
     list.innerHTML = "";
@@ -2033,6 +1890,7 @@ const startSuggestions = () => {
     });
   });
 
+  // Trending posts
   onSnapshot(query(collection(db, "posts"), orderBy("orbitCount", "desc"), limit(5)), (snap) => {
     const list = $("#trendList"); if (!list) return;
     list.innerHTML = "";
@@ -2087,67 +1945,8 @@ $("#globalSearch").addEventListener("keydown", async (e) => {
 })();
 
 // =========================================================================
-// 16. PWA INSTALL PROMPT
-// =========================================================================
-let _deferredInstallPrompt = null;
-
-const _setInstallBtnsVisible = (visible) => {
-  document.querySelectorAll(".install-app-btn").forEach((b) => {
-    b.classList.toggle("hidden", !visible);
-  });
-};
-
-// Hide immediately if already running as installed PWA
-if (window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone) {
-  _setInstallBtnsVisible(false);
-} else {
-  // Will show once beforeinstallprompt fires (Android/desktop Chrome)
-  _setInstallBtnsVisible(false);
-}
-
-window.addEventListener("beforeinstallprompt", (e) => {
-  e.preventDefault();
-  _deferredInstallPrompt = e;
-  _setInstallBtnsVisible(true);
-});
-
-window.addEventListener("appinstalled", () => {
-  _deferredInstallPrompt = null;
-  _setInstallBtnsVisible(false);
-  toast("Orbit installed! Find it on your home screen.");
-});
-
-document.addEventListener("DOMContentLoaded", () => {
-  document.querySelectorAll(".install-app-btn").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-      if (_deferredInstallPrompt) {
-        _deferredInstallPrompt.prompt();
-        const { outcome } = await _deferredInstallPrompt.userChoice;
-        if (outcome === "accepted") {
-          _deferredInstallPrompt = null;
-          _setInstallBtnsVisible(false);
-        }
-      } else if (isIOS) {
-        const modal = document.getElementById("installModal");
-        if (modal) { modal.classList.remove("hidden"); }
-      } else {
-        toast("Open your browser menu and tap 'Add to Home Screen'");
-      }
-    });
-  });
-
-  document.getElementById("installModalClose")?.addEventListener("click", () => {
-    document.getElementById("installModal")?.classList.add("hidden");
-  });
-  document.getElementById("installModal")?.addEventListener("click", (e) => {
-    if (e.target === document.getElementById("installModal"))
-      document.getElementById("installModal").classList.add("hidden");
-  });
-});
-
-// =========================================================================
-// 17. INIT
+// 16. INIT
 // =========================================================================
 initTheme();
+// Hide boot once auth state resolved (handled in onAuthStateChanged)
 setTimeout(() => $("#boot").classList.add("hidden"), 1200);
