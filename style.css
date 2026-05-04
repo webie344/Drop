@@ -1364,3 +1364,54 @@ input[type="range"] { width: 100%; accent-color: var(--primary); }
     0%, 100% { opacity: 1; } 50% { opacity: .45; }
   }
   
+  /* ============================================================
+     ENABLE-NOTIFICATIONS BANNER (push permission prompt)
+     ============================================================ */
+  .notif-enable-banner {
+    position: fixed;
+    bottom: calc(var(--bottomnav-h) + 12px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(500px, calc(100vw - 24px));
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    z-index: 500;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px;
+    animation: slide-up 220ms var(--ease);
+  }
+  .notif-enable-banner.hidden { display: none !important; }
+
+  .notif-enable-text {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .notif-enable-text i {
+    font-size: 22px;
+    color: var(--primary);
+    flex-shrink: 0;
+  }
+  .notif-enable-text span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .notif-enable-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  
