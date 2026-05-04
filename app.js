@@ -2087,7 +2087,67 @@ $("#globalSearch").addEventListener("keydown", async (e) => {
 })();
 
 // =========================================================================
-// 16. INIT
+// 16. PWA INSTALL PROMPT
+// =========================================================================
+let _deferredInstallPrompt = null;
+
+const _setInstallBtnsVisible = (visible) => {
+  document.querySelectorAll(".install-app-btn").forEach((b) => {
+    b.classList.toggle("hidden", !visible);
+  });
+};
+
+// Hide immediately if already running as installed PWA
+if (window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone) {
+  _setInstallBtnsVisible(false);
+} else {
+  // Will show once beforeinstallprompt fires (Android/desktop Chrome)
+  _setInstallBtnsVisible(false);
+}
+
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  _deferredInstallPrompt = e;
+  _setInstallBtnsVisible(true);
+});
+
+window.addEventListener("appinstalled", () => {
+  _deferredInstallPrompt = null;
+  _setInstallBtnsVisible(false);
+  toast("Orbit installed! Find it on your home screen.");
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.querySelectorAll(".install-app-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+      if (_deferredInstallPrompt) {
+        _deferredInstallPrompt.prompt();
+        const { outcome } = await _deferredInstallPrompt.userChoice;
+        if (outcome === "accepted") {
+          _deferredInstallPrompt = null;
+          _setInstallBtnsVisible(false);
+        }
+      } else if (isIOS) {
+        const modal = document.getElementById("installModal");
+        if (modal) { modal.classList.remove("hidden"); }
+      } else {
+        toast("Open your browser menu and tap 'Add to Home Screen'");
+      }
+    });
+  });
+
+  document.getElementById("installModalClose")?.addEventListener("click", () => {
+    document.getElementById("installModal")?.classList.add("hidden");
+  });
+  document.getElementById("installModal")?.addEventListener("click", (e) => {
+    if (e.target === document.getElementById("installModal"))
+      document.getElementById("installModal").classList.add("hidden");
+  });
+});
+
+// =========================================================================
+// 17. INIT
 // =========================================================================
 initTheme();
 setTimeout(() => $("#boot").classList.add("hidden"), 1200);

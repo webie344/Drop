@@ -132,23 +132,45 @@ async function checkForStaleSubscription() {
 
   try {
     const snap = await getDoc(doc(db, "users", state.uid));
-    const saved        = snap.data()?.pushSubscription;
-    const savedVersion = snap.data()?.pushSubVersion;
-    const localVersion = localStorage.getItem("orbit:sub-version");
+    const data          = snap.data() || {};
+    const saved         = data.pushSubscription;
+    const savedVersion  = data.pushSubVersion;
+    const localVersion  = localStorage.getItem("orbit:sub-version");
 
+    // Everything is current — nothing to do
     if (saved && savedVersion === SUBSCRIPTION_VERSION && localVersion === SUBSCRIPTION_VERSION) return;
 
+    // No subscription saved at all — try silent re-subscribe (covers 410 cleanup case)
     if (!saved) {
       console.log("Orbit: no saved subscription, re-subscribing silently");
-      await subscribe();
+      const ok = await subscribe();
+      if (!ok) {
+        // Silent re-subscribe failed — ask user to tap Refresh
+        setTimeout(() => {
+          showNotifBanner("Tap to reconnect push notifications");
+          const btn = document.getElementById("notifEnableBtn");
+          if (btn) btn.textContent = "Reconnect";
+        }, 3000);
+      }
       return;
     }
 
-    setTimeout(() => {
-      showNotifBanner("Tap Refresh to keep getting notifications");
-      const btn = document.getElementById("notifEnableBtn");
-      if (btn) btn.textContent = "Refresh";
-    }, 4000);
+    // Subscription exists but VAPID key version changed — need fresh subscription
+    if (savedVersion !== SUBSCRIPTION_VERSION) {
+      console.log("Orbit: VAPID key changed, re-subscribing silently");
+      const ok = await subscribe();
+      if (!ok) {
+        setTimeout(() => {
+          showNotifBanner("Tap Refresh to keep getting notifications");
+          const btn = document.getElementById("notifEnableBtn");
+          if (btn) btn.textContent = "Refresh";
+        }, 3000);
+      }
+      return;
+    }
+
+    // Local version out of sync (e.g. different device/tab) — sync it silently
+    localStorage.setItem("orbit:sub-version", SUBSCRIPTION_VERSION);
   } catch (err) {
     console.warn("Orbit: stale subscription check failed", err);
   }
