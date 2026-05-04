@@ -1,1190 +1,1020 @@
-/* =============================================================
-   features.js — paste-in companion module for Drop  (PATCHED)
-   Loaded via:  <script type="module" src="features.js"></script>
-   Depends on window.dropApp exposed by app.js
+// =========================================================================
+// Orbit — features.js
+// New features: Orbit Score · Code Snippets · Tech Stack · Build in Public
+// Project Showcase · Orbit Spaces · Daily Challenges · Skill Badges ·
+// Mentorship Matching · Constellation View
+//
+// HOW TO USE:
+// 1. Add in index.html <head>:
+//      <link rel="stylesheet" href="features.css" />
+//      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+//      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+// 2. Add before </body> in index.html:
+//      <script type="module" src="features.js"></script>
+// 3. In app.js — update routes array to include new routes:
+//      const routes = [...existing..., "spaces", "challenges", "mentorship"];
+// 4. In app.js — add new cases to the router switch:
+//      case "spaces":     renderSpaces(content); break;
+//      case "challenges": renderChallenges(content); break;
+//      case "mentorship": renderMentorship(content); break;
+//    NOTE: You must import these from features.js or copy the export calls
+//    below. Simplest: replace those 3 cases with dynamic imports:
+//      case "spaces":     import("./features.js").then(m=>m.renderSpaces(content)); break;
+//      case "challenges": import("./features.js").then(m=>m.renderChallenges(content)); break;
+//      case "mentorship": import("./features.js").then(m=>m.renderMentorship(content)); break;
+// 5. Add new nav items to sidebar & bottomnav in index.html (see README below)
+// =========================================================================
 
-   Adds:
-     1. Chat customization (per-chat theme color + wallpaper)
-     2. Songs on drops (preloaded library + mini-player)
-     3. Reply drops (photo replies to a feed drop)
-     4. Streak shields (earn 1 every 14-day run, shown next to streak)
-     5. Monthly "Year-in-Drops" recap (shareable image)
+import { db, state, $, $$, el, toast, avatarFor, fetchUser, fmtTime, writeNotif, escapeHtml } from "./app.js";
 
-   ---------------------------------------------------------------
-   IMPORTANT — what changed vs. the previous version
-   ---------------------------------------------------------------
-   The previous version registered FOUR MutationObservers on the
-   entire <body> with { attributes: true, attributeFilter: ["hidden"],
-   childList: true, subtree: true }. Every router view-swap, every feed
-   re-render and every dialog open fired all of them dozens of times
-   per click. They then mutated the DOM in their callbacks (innerHTML
-   writes, appendChild, style writes), which re-triggered themselves
-   in a microtask cascade — locking the UI when the user pressed the
-   "Post late" / capture button.
+import {
+  doc, setDoc, getDoc, updateDoc, addDoc, deleteDoc,
+  collection, query, where, orderBy, limit, onSnapshot,
+  getDocs, serverTimestamp, increment, arrayUnion, arrayRemove,
+  writeBatch,
+} from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
-   This version:
-     * Removes every `attributeFilter:["hidden"]` watcher on body.
-     * Drives all view-aware injection from `hashchange` instead.
-     * Scopes the post-card enhancers to `#feed-grid` only and uses
-       child-presence checks (not dataset flags) so an `innerHTML`
-       patch cleanly re-injects the badge/button without ping-pong.
-     * Caches per-post Firestore lookups so the feed doesn't fire 240
-       reads on every snapshot.
-     * Replaces Shields' setInterval(2s) poller with a single load +
-       hashchange render.
-   ============================================================= */
+// =========================================================================
+// UTILITIES
+// =========================================================================
 
-// ---- Wait for app.js to publish window.dropApp ----
-let App = window.dropApp;
-if (!App) {
-    await new Promise(resolve => {
-        window.addEventListener("dropapp:ready", () => { App = window.dropApp; resolve(); }, { once: true });
-    });
-}
-
-const { state, db, $, $$, escapeHtml, showToast, todayKey, uploadToCloudinary } = App;
-const F = App.firestore;
-
-// Tiny helpers
-const _on = (el, ev, fn) => el && el.addEventListener(ev, fn);
-const debounce = (fn, ms = 200) => {
-    let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+// Render text with code block detection (```lang\ncode\n```)
+export const renderTextWithCode = (text = "") => {
+  const frag = document.createDocumentFragment();
+  const parts = text.split(/(```[\s\S]*?```)/g);
+  parts.forEach((part) => {
+    if (part.startsWith("```")) {
+      const inner  = part.slice(3, -3);
+      const nl     = inner.indexOf("\n");
+      const lang   = nl > -1 ? inner.slice(0, nl).trim() : "";
+      const code   = nl > -1 ? inner.slice(nl + 1) : inner;
+      const pre    = el("div", { class: "orbit-code-wrap" });
+      if (lang) pre.appendChild(el("div", { class: "orbit-code-lang" }, lang));
+      const copyBtn = el("button", { class: "orbit-code-copy", title: "Copy" }, el("i", { class: "ri-file-copy-line" }));
+      copyBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(code).then(() => toast("Copied!"));
+      });
+      pre.appendChild(copyBtn);
+      const codeEl = el("code", { class: lang ? `language-${lang}` : "" });
+      codeEl.textContent = code;
+      const preEl  = el("pre");
+      preEl.appendChild(codeEl);
+      pre.appendChild(preEl);
+      if (window.hljs) window.hljs.highlightElement(codeEl);
+      frag.appendChild(pre);
+    } else if (part) {
+      const div = el("div", { class: "post-text" });
+      div.innerHTML = escapeHtml(part)
+        .replace(/(https?:\/\/[^\s]+)/g, (m) => `<a href="${m}" target="_blank" rel="noopener">${m}</a>`)
+        .replace(/#([A-Za-z][\w]*)/g, (_, t) => `<a class="hashtag" href="#explore/tag/${t}">#${t}</a>`)
+        .replace(/@(\w+)/g, (_, u) => `<a class="mention" href="#profile-u/${u}">@${u}</a>`);
+      frag.appendChild(div);
+    }
+  });
+  return frag;
 };
 
-// Drop's existing dialogs are <div class="dialog" hidden>
-const openDialog = (id) => { const d = document.getElementById(id); if (d) d.hidden = false; };
-const closeDialog = (id) => { const d = document.getElementById(id); if (d) d.hidden = true; };
-
-// Generic close-dialog wiring
-document.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-close-dialog]");
-    if (btn) { closeDialog(btn.dataset.closeDialog); return; }
-    const dlg = e.target.closest("#song-picker-dialog, #chat-custom-dialog, #monthly-recap-dialog");
-    if (dlg && e.target === dlg) closeDialog(dlg.id);
-});
-document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    ["song-picker-dialog", "chat-custom-dialog", "monthly-recap-dialog"].forEach(id => {
-        const d = document.getElementById(id);
-        if (d && !d.hidden) closeDialog(id);
+// =========================================================================
+// 1. ORBIT SCORE
+// Shows a weighted reputation score on profiles.
+// Score = (post orbits × 3) + (comments × 1) + (followers × 5)
+// =========================================================================
+export const computeOrbitScore = async (uid) => {
+  try {
+    const [postsSnap, userSnap] = await Promise.all([
+      getDocs(query(collection(db, "posts"), where("authorUid", "==", uid), limit(50))),
+      getDoc(doc(db, "users", uid)),
+    ]);
+    const user = userSnap.data() || {};
+    const followerCount = (user.followers || []).length;
+    let orbitTotal = 0, commentTotal = 0;
+    postsSnap.docs.forEach((d) => {
+      orbitTotal   += d.data().orbitCount   || 0;
+      commentTotal += d.data().commentCount || 0;
     });
-});
+    return Math.round(orbitTotal * 3 + commentTotal * 1 + followerCount * 5);
+  } catch { return 0; }
+};
 
-// Single shared "current route" helper.
-const currentHash = () => location.hash || "#/";
-const onHash = (fn) => window.addEventListener("hashchange", fn);
+export const renderOrbitScoreBadge = async (container, uid) => {
+  const score = await computeOrbitScore(uid);
+  const tier  =
+    score >= 500 ? { label: "Legend",   color: "#ffd700", icon: "ri-vip-crown-fill" } :
+    score >= 200 ? { label: "Pro",      color: "var(--grad-1)", icon: "ri-star-fill" } :
+    score >= 80  ? { label: "Rising",   color: "var(--good)",   icon: "ri-rocket-fill" } :
+                   { label: "Newcomer", color: "var(--text-dim)", icon: "ri-seedling-fill" };
 
-// One-shot rAF debouncer — coalesces multiple sync triggers into a
-// single callback before the next paint. Used to gate enhancers so
-// they can't recurse in a microtask cascade.
-function rafOnce(fn) {
-    let scheduled = false;
-    return (...args) => {
-        if (scheduled) return;
-        scheduled = true;
-        requestAnimationFrame(() => { scheduled = false; fn(...args); });
+  const badge = el("div", { class: "orbit-score-badge", title: `Orbit Score: ${score}` },
+    el("i", { class: tier.icon, style: `color:${tier.color};` }),
+    el("span", { class: "osb-score" }, String(score)),
+    el("span", { class: "osb-tier" }, tier.label),
+  );
+  container.appendChild(badge);
+};
+
+// =========================================================================
+// 2. TECH STACK PROFILE SECTION
+// Users declare what they use / are learning on their profile.
+// Stored in Firestore user doc as `techStack: string[]`
+// =========================================================================
+const TECH_SUGGESTIONS = [
+  "JavaScript","TypeScript","Python","Rust","Go","Java","C++","C#","Swift","Kotlin",
+  "React","Vue","Angular","Svelte","Next.js","Nuxt","Remix","SolidJS",
+  "Node.js","Express","FastAPI","Django","Spring","Laravel","Rails",
+  "Firebase","Supabase","PostgreSQL","MongoDB","Redis","MySQL",
+  "Docker","Kubernetes","AWS","GCP","Azure","Vercel","Netlify",
+  "TailwindCSS","GraphQL","tRPC","WebSockets","WebAssembly",
+  "React Native","Flutter","Swift UI","Expo",
+];
+
+export const renderTechStack = (container, userDoc, isMe = false) => {
+  const stack = userDoc.techStack || [];
+  const wrap  = el("div", { class: "tech-stack-section" });
+
+  const head = el("div", { class: "ts-head" },
+    el("span", { class: "ts-title" }, el("i", { class: "ri-code-s-slash-fill" }), " Tech Stack"),
+  );
+  wrap.appendChild(head);
+
+  if (!stack.length && !isMe) {
+    wrap.appendChild(el("div", { class: "ts-empty" }, "No tech stack listed yet."));
+    container.appendChild(wrap);
+    return;
+  }
+
+  const tagsEl = el("div", { class: "ts-tags" });
+  stack.forEach((t) => tagsEl.appendChild(el("span", { class: "ts-tag" }, t)));
+  wrap.appendChild(tagsEl);
+
+  if (isMe) {
+    const editBtn = el("button", { class: "btn ghost sm ts-edit-btn" },
+      el("i", { class: "ri-edit-line" }), stack.length ? "Edit" : "Add your stack");
+    editBtn.addEventListener("click", () => openTechStackEditor(userDoc, tagsEl));
+    wrap.appendChild(editBtn);
+  }
+
+  container.appendChild(wrap);
+};
+
+const openTechStackEditor = (userDoc, tagsEl) => {
+  const existing = [...(userDoc.techStack || [])];
+  const overlay  = el("div", { class: "ts-editor-overlay" });
+  const modal    = el("div", { class: "ts-editor-modal" });
+
+  modal.appendChild(el("div", { class: "ts-editor-head" },
+    el("h3", {}, "Edit Tech Stack"),
+    el("button", { class: "icon-btn", onclick: () => overlay.remove() }, el("i", { class: "ri-close-line" })),
+  ));
+
+  const selected = new Set(existing);
+
+  const selectedWrap = el("div", { class: "ts-selected-wrap" });
+  const refreshSelected = () => {
+    selectedWrap.innerHTML = "";
+    selected.forEach((t) => {
+      const chip = el("span", { class: "ts-chip" },
+        t,
+        el("button", { onclick: () => { selected.delete(t); refreshSelected(); } },
+          el("i", { class: "ri-close-line" })),
+      );
+      selectedWrap.appendChild(chip);
+    });
+  };
+  refreshSelected();
+  modal.appendChild(el("div", { class: "ts-editor-body" },
+    el("div", { class: "ts-editor-label" }, "Selected"),
+    selectedWrap,
+    el("div", { class: "ts-editor-label" }, "Suggestions"),
+    (() => {
+      const grid = el("div", { class: "ts-suggestions" });
+      TECH_SUGGESTIONS.forEach((t) => {
+        const btn = el("button", { class: "ts-suggest-btn" }, t);
+        btn.addEventListener("click", () => {
+          if (selected.size >= 20) { toast("Max 20 techs"); return; }
+          selected.add(t);
+          refreshSelected();
+        });
+        grid.appendChild(btn);
+      });
+      return grid;
+    })(),
+  ));
+
+  const inputRow = el("div", { class: "ts-custom-row" },
+    el("input", { type: "text", placeholder: "Add custom tech…", id: "tsCustomInput" }),
+    el("button", { class: "btn primary sm", onclick: () => {
+      const val = document.getElementById("tsCustomInput")?.value.trim();
+      if (!val) return;
+      if (selected.size >= 20) { toast("Max 20 techs"); return; }
+      selected.add(val);
+      refreshSelected();
+      const inp = document.getElementById("tsCustomInput");
+      if (inp) inp.value = "";
+    }}, "Add"),
+  );
+  modal.appendChild(inputRow);
+
+  const saveBtn = el("button", { class: "btn primary ts-save-btn", onclick: async () => {
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving…";
+    const arr = [...selected];
+    await updateDoc(doc(db, "users", state.uid), { techStack: arr });
+    userDoc.techStack = arr;
+    tagsEl.innerHTML = "";
+    arr.forEach((t) => tagsEl.appendChild(el("span", { class: "ts-tag" }, t)));
+    toast("Stack updated!");
+    overlay.remove();
+  }}, "Save changes");
+  modal.appendChild(saveBtn);
+
+  overlay.appendChild(modal);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+};
+
+// =========================================================================
+// 3. BUILD IN PUBLIC — post type with milestone + progress tracking
+// Add new compose tab in index.html:
+//   <button class="ct" data-ctab="build"><i class="ri-hammer-line"></i> Build</button>
+// Add new compose pane in index.html:
+//   <form id="buildForm" class="compose-pane hidden"> ... </form>
+// =========================================================================
+export const initBuildCompose = () => {
+  const form = document.getElementById("buildForm");
+  if (!form) return;
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd     = new FormData(form);
+    const title  = (fd.get("buildTitle") || "").trim();
+    const desc   = (fd.get("buildDesc")  || "").trim();
+    const stage  = fd.get("buildStage")  || "idea";
+    const prog   = parseInt(fd.get("buildProgress") || "0", 10);
+    if (!title) { toast("Give your build a title"); return; }
+
+    const btn = form.querySelector("button[type=submit]");
+    btn.disabled = true; btn.textContent = "Posting…";
+    try {
+      await addDoc(collection(db, "posts"), {
+        authorUid: state.uid,
+        kind: "build",
+        title,
+        text: desc,
+        buildStage: stage,
+        buildProgress: Math.min(100, Math.max(0, prog)),
+        orbits: [], orbitCount: 0, commentCount: 0,
+        createdAt: serverTimestamp(),
+      });
+      form.reset();
+      document.getElementById("composeModal")?.classList.add("hidden");
+      toast("Build update posted!");
+    } catch (err) { toast("Failed: " + (err.message || "error")); }
+    finally { btn.disabled = false; btn.textContent = "Post update"; }
+  });
+
+  // Live progress preview
+  const prog = form.querySelector("input[name='buildProgress']");
+  const bar  = form.querySelector(".build-prog-preview");
+  if (prog && bar) {
+    prog.addEventListener("input", () => { bar.style.width = prog.value + "%"; });
+  }
+};
+
+export const renderBuildPost = (p, author) => {
+  const stageColors = { idea:"var(--grad-3)", prototype:"var(--warn)", beta:"var(--grad-1)", live:"var(--good)" };
+  const stageLabels = { idea:"Idea", prototype:"Prototype", beta:"Beta", live:"Live" };
+  const color = stageColors[p.buildStage] || "var(--primary)";
+
+  return el("article", { class: "post build-post" },
+    el("div", { class: "build-post-head" },
+      el("img", { class: "avatar sm", src: avatarFor(author),
+        onclick: () => location.hash = `#profile/${author?.uid}` }),
+      el("div", { class: "build-meta" },
+        el("div", { class: "build-name" },
+          author?.name || "User",
+          el("span", { class: "build-stage-badge", style: `background:${color}` },
+            stageLabels[p.buildStage] || p.buildStage),
+        ),
+        el("div", { class: "build-time" }, "@" + (author?.username || "user") + " · " + fmtTime(p.createdAt)),
+      ),
+      el("span", { class: "build-label" }, el("i", { class: "ri-hammer-line" }), " Build in Public"),
+    ),
+    el("div", { class: "build-title" }, p.title || ""),
+    p.text ? el("div", { class: "build-desc" }, p.text) : null,
+    el("div", { class: "build-progress-wrap" },
+      el("div", { class: "build-progress-label" },
+        el("span", {}, "Progress"),
+        el("strong", {}, (p.buildProgress || 0) + "%"),
+      ),
+      el("div", { class: "build-progress-track" },
+        el("div", { class: "build-progress-fill", style: `width:${p.buildProgress||0}%;background:${color}` }),
+      ),
+    ),
+  );
+};
+
+// =========================================================================
+// 4. PROJECT SHOWCASE — post type with GitHub + live URL + tech tags
+// Add new compose tab in index.html:
+//   <button class="ct" data-ctab="project"><i class="ri-folder-5-line"></i> Project</button>
+// Add new compose pane in index.html:
+//   <form id="projectForm" class="compose-pane hidden"> ... </form>
+// =========================================================================
+export const initProjectCompose = () => {
+  const form = document.getElementById("projectForm");
+  if (!form) return;
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd      = new FormData(form);
+    const title   = (fd.get("projectTitle") || "").trim();
+    const desc    = (fd.get("projectDesc")  || "").trim();
+    const github  = (fd.get("projectGithub") || "").trim();
+    const live    = (fd.get("projectLive")   || "").trim();
+    const rawTags = (fd.get("projectTags")   || "").trim();
+    const tags    = rawTags ? rawTags.split(",").map((t) => t.trim()).filter(Boolean).slice(0, 8) : [];
+
+    if (!title) { toast("Give your project a name"); return; }
+    const btn = form.querySelector("button[type=submit]");
+    btn.disabled = true; btn.textContent = "Posting…";
+    try {
+      await addDoc(collection(db, "posts"), {
+        authorUid: state.uid,
+        kind: "project",
+        title,
+        text: desc,
+        githubUrl: github || null,
+        liveUrl: live || null,
+        techTags: tags,
+        orbits: [], orbitCount: 0, commentCount: 0,
+        createdAt: serverTimestamp(),
+      });
+      form.reset();
+      document.getElementById("composeModal")?.classList.add("hidden");
+      toast("Project showcased!");
+    } catch (err) { toast("Failed: " + (err.message || "error")); }
+    finally { btn.disabled = false; btn.textContent = "Showcase"; }
+  });
+};
+
+export const renderProjectPost = (p, author) => {
+  return el("article", { class: "post project-post" },
+    el("div", { class: "project-card-inner" },
+      el("div", { class: "project-post-head" },
+        el("img", { class: "avatar sm", src: avatarFor(author),
+          onclick: () => location.hash = `#profile/${author?.uid}` }),
+        el("div", { class: "project-meta" },
+          el("div", { class: "project-author" }, author?.name || "User"),
+          el("div", { class: "project-time" }, fmtTime(p.createdAt)),
+        ),
+        el("span", { class: "project-label" }, el("i", { class: "ri-folder-5-line" }), " Project"),
+      ),
+      el("div", { class: "project-title" }, p.title || ""),
+      p.text ? el("div", { class: "project-desc" }, p.text) : null,
+      p.techTags?.length
+        ? el("div", { class: "project-tags" },
+            ...p.techTags.map((t) => el("span", { class: "ts-tag" }, t)))
+        : null,
+      el("div", { class: "project-links" },
+        p.githubUrl ? el("a", { href: p.githubUrl, target: "_blank", rel: "noopener", class: "btn ghost sm" },
+          el("i", { class: "ri-github-fill" }), "GitHub") : null,
+        p.liveUrl ? el("a", { href: p.liveUrl, target: "_blank", rel: "noopener", class: "btn primary sm" },
+          el("i", { class: "ri-external-link-line" }), "Live Demo") : null,
+      ),
+    ),
+  );
+};
+
+// =========================================================================
+// 5. ORBIT SPACES — topic-based persistent rooms
+// Route: #spaces
+// =========================================================================
+export const renderSpaces = (root) => {
+  root.innerHTML = "";
+  const head = el("div", { class: "section-head" },
+    el("h2", {}, el("i", { class: "ri-planet-line" }), " Orbit Spaces"),
+    el("div", { class: "right" },
+      el("button", { class: "btn primary", onclick: openCreateSpace },
+        el("i", { class: "ri-add-line" }), "New Space"),
+    ),
+  );
+  root.appendChild(head);
+
+  const grid = el("div", { class: "spaces-grid" });
+  root.appendChild(grid);
+
+  onSnapshot(query(collection(db, "spaces"), orderBy("memberCount", "desc"), limit(40)), (snap) => {
+    grid.innerHTML = "";
+    if (snap.empty) {
+      grid.appendChild(el("div", { class: "empty", style: "grid-column:1/-1" },
+        el("i", { class: "ri-planet-line" }),
+        el("div", { class: "t" }, "No Spaces yet"),
+        el("div", {}, "Create the first topic space for your community."),
+      ));
+      return;
+    }
+    snap.docs.forEach((d) => {
+      const s = { id: d.id, ...d.data() };
+      const joined = (s.members || []).includes(state.uid);
+      const card = el("div", { class: "space-card" },
+        el("div", { class: "space-icon", style: `background:${s.color || "var(--grad-1)"}` },
+          el("i", { class: s.icon || "ri-planet-line" })),
+        el("div", { class: "space-name" }, s.name),
+        el("div", { class: "space-topic" }, s.topic || ""),
+        el("div", { class: "space-meta" },
+          el("i", { class: "ri-group-line" }),
+          ` ${s.memberCount || 0} members`,
+        ),
+        el("div", { class: "space-actions" },
+          el("button", {
+            class: `btn ${joined ? "ghost" : "primary"} sm`,
+            onclick: async () => {
+              const ref = doc(db, "spaces", s.id);
+              if (joined) {
+                await updateDoc(ref, { members: arrayRemove(state.uid), memberCount: increment(-1) });
+                toast("Left space");
+              } else {
+                await updateDoc(ref, { members: arrayUnion(state.uid), memberCount: increment(1) });
+                toast("Joined space!");
+              }
+            },
+          }, joined ? "Leave" : "Join"),
+          joined ? el("button", { class: "btn ghost sm", onclick: () => openSpaceChat(s) },
+            el("i", { class: "ri-chat-3-line" }), "Open") : null,
+        ),
+      );
+      grid.appendChild(card);
+    });
+  });
+};
+
+const SPACE_ICONS = [
+  "ri-code-s-slash-fill","ri-robot-fill","ri-database-fill","ri-smartphone-fill",
+  "ri-global-fill","ri-paint-fill","ri-star-fill","ri-trophy-fill",
+  "ri-brain-fill","ri-rocket-fill","ri-cpu-fill","ri-cloud-fill",
+];
+const SPACE_COLORS = [
+  "var(--grad-1)","var(--grad-2)","var(--grad-3)","var(--good)","var(--warn)","var(--danger)",
+  "#5c8aff","#ff8c5c","#5cffc2",
+];
+
+const openCreateSpace = () => {
+  const overlay = el("div", { class: "ts-editor-overlay" });
+  const modal   = el("div", { class: "ts-editor-modal" });
+  let pickedIcon  = SPACE_ICONS[0];
+  let pickedColor = SPACE_COLORS[0];
+
+  modal.appendChild(el("div", { class: "ts-editor-head" },
+    el("h3", {}, "Create Space"),
+    el("button", { class: "icon-btn", onclick: () => overlay.remove() }, el("i", { class: "ri-close-line" })),
+  ));
+
+  const preview = el("div", { class: "space-icon", style: `background:${pickedColor}` }, el("i", { class: pickedIcon }));
+  modal.appendChild(el("div", { class: "ts-editor-body" },
+    el("div", { style: "display:flex;justify-content:center;margin-bottom:16px;" }, preview),
+    el("label", {}, "Space name", el("input", { type: "text", id: "spaceNameInp", placeholder: "e.g. AI Builders" })),
+    el("label", {}, "Topic / description", el("input", { type: "text", id: "spaceTopicInp", placeholder: "e.g. Discuss AI tools & projects" })),
+    el("div", { class: "ts-editor-label" }, "Icon"),
+    (() => {
+      const g = el("div", { class: "space-icon-grid" });
+      SPACE_ICONS.forEach((ic) => {
+        const btn = el("button", { class: "space-icon-btn", onclick: () => {
+          pickedIcon = ic;
+          preview.innerHTML = "";
+          preview.appendChild(el("i", { class: ic }));
+        }}, el("i", { class: ic }));
+        g.appendChild(btn);
+      });
+      return g;
+    })(),
+    el("div", { class: "ts-editor-label" }, "Color"),
+    (() => {
+      const g = el("div", { class: "swatches" });
+      SPACE_COLORS.forEach((c) => {
+        const s = el("button", { class: "swatch", style: `background:${c}`, onclick: () => {
+          pickedColor = c;
+          preview.style.background = c;
+        }});
+        g.appendChild(s);
+      });
+      return g;
+    })(),
+  ));
+
+  modal.appendChild(el("button", { class: "btn primary ts-save-btn", onclick: async () => {
+    const name  = (document.getElementById("spaceNameInp")?.value  || "").trim();
+    const topic = (document.getElementById("spaceTopicInp")?.value || "").trim();
+    if (!name) { toast("Give the space a name"); return; }
+    await addDoc(collection(db, "spaces"), {
+      name, topic,
+      icon: pickedIcon, color: pickedColor,
+      ownerUid: state.uid,
+      members: [state.uid],
+      memberCount: 1,
+      createdAt: serverTimestamp(),
+    });
+    toast("Space created!");
+    overlay.remove();
+  }}, "Create Space"));
+
+  overlay.appendChild(modal);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+};
+
+const openSpaceChat = (space) => {
+  const overlay = el("div", { class: "ts-editor-overlay" });
+  const modal   = el("div", { class: "space-chat-modal" });
+
+  modal.appendChild(el("div", { class: "ts-editor-head" },
+    el("div", { style: "display:flex;align-items:center;gap:10px;" },
+      el("div", { class: "space-icon sm", style: `background:${space.color}` }, el("i", { class: space.icon })),
+      el("h3", { style: "margin:0" }, space.name),
+    ),
+    el("button", { class: "icon-btn", onclick: () => overlay.remove() }, el("i", { class: "ri-close-line" })),
+  ));
+
+  const msgList = el("div", { class: "space-msg-list" });
+  modal.appendChild(msgList);
+
+  const composeRow = el("div", { class: "space-compose-row" });
+  const input = el("input", { type: "text", placeholder: `Message #${space.name}…`, class: "space-msg-input" });
+  const sendBtn = el("button", { class: "icon-btn", onclick: sendMsg }, el("i", { class: "ri-send-plane-fill", style: "color:var(--primary)" }));
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") sendMsg(); });
+  composeRow.appendChild(el("img", { class: "avatar xs", src: avatarFor(state.me) }));
+  composeRow.appendChild(input);
+  composeRow.appendChild(sendBtn);
+  modal.appendChild(composeRow);
+
+  async function sendMsg() {
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    await addDoc(collection(db, "spaces", space.id, "messages"), {
+      authorUid: state.uid,
+      fromName: state.me?.name || "User",
+      fromAvatar: state.me?.photoURL || "",
+      text,
+      createdAt: serverTimestamp(),
+    });
+  }
+
+  const unsub = onSnapshot(
+    query(collection(db, "spaces", space.id, "messages"), orderBy("createdAt", "asc"), limit(80)),
+    (snap) => {
+      msgList.innerHTML = "";
+      snap.docs.forEach((d) => {
+        const m = d.data();
+        const isMe = m.authorUid === state.uid;
+        msgList.appendChild(el("div", { class: `space-msg${isMe ? " mine" : ""}` },
+          !isMe ? el("img", { class: "avatar xs", src: m.fromAvatar || avatarFor({ uid: m.authorUid }) }) : null,
+          el("div", { class: "space-msg-body" },
+            !isMe ? el("div", { class: "space-msg-name" }, m.fromName) : null,
+            el("div", { class: "space-msg-text" }, m.text),
+          ),
+        ));
+      });
+      msgList.scrollTop = msgList.scrollHeight;
+    });
+
+  overlay.appendChild(modal);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) { unsub(); overlay.remove(); } });
+  document.body.appendChild(overlay);
+};
+
+// =========================================================================
+// 6. DAILY CHALLENGES + LEADERBOARD
+// Route: #challenges
+// Firestore: "challenges" collection — one active doc per day
+// =========================================================================
+export const renderChallenges = (root) => {
+  root.innerHTML = "";
+  root.appendChild(el("div", { class: "section-head" },
+    el("h2", {}, el("i", { class: "ri-trophy-line" }), " Daily Challenges"),
+  ));
+
+  const wrap = el("div", { class: "challenge-wrap" });
+  root.appendChild(wrap);
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  getDoc(doc(db, "challenges", today)).then(async (snap) => {
+    let challenge = snap.exists() ? { id: snap.id, ...snap.data() } : null;
+
+    if (!challenge) {
+      const seed = DAILY_CHALLENGES[Math.floor(Date.now() / 86400000) % DAILY_CHALLENGES.length];
+      challenge = { id: today, ...seed, submissions: [], createdAt: new Date() };
+      try { await setDoc(doc(db, "challenges", today), { ...seed, submissions: [], createdAt: serverTimestamp() }); } catch {}
+    }
+
+    wrap.appendChild(renderChallengeCard(challenge, today));
+    wrap.appendChild(await renderLeaderboard());
+  }).catch(() => {
+    wrap.appendChild(el("div", { class: "empty" },
+      el("i", { class: "ri-error-warning-line" }),
+      el("div", { class: "t" }, "Could not load challenge"),
+    ));
+  });
+};
+
+const DAILY_CHALLENGES = [
+  { title: "Reverse a String", difficulty: "Easy",   description: "Write a function that reverses a string without using built-in reverse methods. What's the time complexity?", category: "Algorithms" },
+  { title: "FizzBuzz with a Twist", difficulty: "Easy", description: "Classic FizzBuzz but: multiples of 7 print 'Orbit', multiples of both 3 and 7 print 'OrbitFizz'. Make it work for any n.", category: "Logic" },
+  { title: "Debounce Function", difficulty: "Medium", description: "Implement a debounce function from scratch in JavaScript. Your implementation should handle edge cases.", category: "JavaScript" },
+  { title: "Binary Search", difficulty: "Medium", description: "Implement binary search iteratively AND recursively. Compare the approaches. What are the trade-offs?", category: "Algorithms" },
+  { title: "Flatten Nested Array", difficulty: "Medium", description: "Flatten an arbitrarily nested array without using Array.flat(). Handle mixed types.", category: "JavaScript" },
+  { title: "LRU Cache", difficulty: "Hard", description: "Implement an LRU (Least Recently Used) cache with O(1) get and put operations.", category: "Data Structures" },
+  { title: "Build a Promise", difficulty: "Hard", description: "Implement a basic Promise class from scratch with .then(), .catch(), and chaining support.", category: "JavaScript" },
+  { title: "Two Sum", difficulty: "Easy", description: "Given an array of integers and a target, return the indices of the two numbers that add up to the target.", category: "Algorithms" },
+  { title: "CSS Layout Challenge", difficulty: "Easy", description: "Center a div both horizontally and vertically using 3 different CSS methods. Which do you prefer and why?", category: "CSS" },
+  { title: "Event Emitter", difficulty: "Medium", description: "Build a simple EventEmitter class with on(), off(), and emit() methods.", category: "JavaScript" },
+];
+
+const renderChallengeCard = (challenge, today) => {
+  const diffColors = { Easy: "var(--good)", Medium: "var(--warn)", Hard: "var(--danger)" };
+  const hasSubmitted = (challenge.submissions || []).includes(state.uid);
+
+  const card = el("div", { class: "challenge-card" },
+    el("div", { class: "challenge-card-head" },
+      el("span", { class: "challenge-cat" }, challenge.category || ""),
+      el("span", { class: "challenge-diff", style: `color:${diffColors[challenge.difficulty] || "var(--primary)"}` },
+        challenge.difficulty),
+      el("span", { class: "challenge-date" }, "Today"),
+    ),
+    el("div", { class: "challenge-title" }, challenge.title),
+    el("div", { class: "challenge-desc" }, challenge.description),
+  );
+
+  if (hasSubmitted) {
+    card.appendChild(el("div", { class: "challenge-done" },
+      el("i", { class: "ri-check-double-line" }), " You submitted today — check back tomorrow!",
+    ));
+  } else {
+    const textarea = el("textarea", { placeholder: "Paste your solution here (code, explanation, or both)…", rows: "6", class: "challenge-solution" });
+    const submitBtn = el("button", { class: "btn primary", onclick: async () => {
+      const sol = textarea.value.trim();
+      if (!sol) { toast("Write your solution first"); return; }
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Submitting…";
+      try {
+        await addDoc(collection(db, "challenges", today, "entries"), {
+          authorUid: state.uid,
+          authorName: state.me?.name || "User",
+          solution: sol,
+          createdAt: serverTimestamp(),
+        });
+        await updateDoc(doc(db, "challenges", today), { submissions: arrayUnion(state.uid) });
+        await updateDoc(doc(db, "users", state.uid), { challengeScore: increment(1) });
+        card.querySelector(".challenge-solution")?.replaceWith(
+          el("div", { class: "challenge-done" }, el("i", { class: "ri-check-double-line" }), " Submitted!"),
+        );
+        submitBtn.remove();
+        toast("Solution submitted! +1 to your score");
+      } catch { toast("Failed to submit"); submitBtn.disabled = false; submitBtn.textContent = "Submit solution"; }
+    }}, "Submit solution");
+    card.appendChild(textarea);
+    card.appendChild(submitBtn);
+  }
+  return card;
+};
+
+const renderLeaderboard = async () => {
+  const wrap = el("div", { class: "leaderboard-wrap" });
+  wrap.appendChild(el("div", { class: "lb-title" }, el("i", { class: "ri-bar-chart-2-fill" }), " Leaderboard"));
+
+  try {
+    const snap = await getDocs(query(collection(db, "users"), orderBy("challengeScore", "desc"), limit(10)));
+    if (snap.empty) {
+      wrap.appendChild(el("div", { class: "lb-empty" }, "No submissions yet — be the first!"));
+      return wrap;
+    }
+    snap.docs.forEach((d, i) => {
+      const u = { uid: d.id, ...d.data() };
+      const medals = ["🥇", "🥈", "🥉"];
+      wrap.appendChild(el("div", { class: "lb-row" },
+        el("div", { class: "lb-rank" }, medals[i] || String(i + 1)),
+        el("img", { class: "avatar sm", src: avatarFor(u), onclick: () => location.hash = `#profile/${u.uid}` }),
+        el("div", { class: "lb-info" },
+          el("div", { class: "lb-name" }, u.name || "User"),
+          el("div", { class: "lb-score" }, (u.challengeScore || 0) + " solved"),
+        ),
+      ));
+    });
+  } catch { wrap.appendChild(el("div", { class: "lb-empty" }, "Could not load leaderboard")); }
+  return wrap;
+};
+
+// =========================================================================
+// 7. SKILL BADGES — peer-verified skill tags on profiles
+// Stored in Firestore: users/{uid}/badges subcollection
+// =========================================================================
+export const renderSkillBadges = async (container, uid, isMe = false) => {
+  const wrap = el("div", { class: "skill-badges-section" });
+  wrap.appendChild(el("div", { class: "sb-head" },
+    el("span", {}, el("i", { class: "ri-award-fill" }), " Skill Badges"),
+    isMe ? el("button", { class: "btn ghost sm", onclick: () => openAddBadge(uid, wrap) },
+      el("i", { class: "ri-add-line" }), "Add") : null,
+  ));
+
+  try {
+    const snap = await getDocs(collection(db, "users", uid, "badges"));
+    if (snap.empty) {
+      if (isMe) wrap.appendChild(el("div", { class: "sb-empty" }, "Add skills you want peers to verify."));
+      else wrap.appendChild(el("div", { class: "sb-empty" }, "No skill badges yet."));
+    } else {
+      const grid = el("div", { class: "sb-grid" });
+      snap.docs.forEach((d) => {
+        const b = { id: d.id, ...d.data() };
+        const endorsed = (b.endorsements || []).includes(state.uid);
+        const endorseBtn = uid !== state.uid ? el("button", {
+          class: `sb-endorse${endorsed ? " active" : ""}`,
+          title: endorsed ? "Remove endorsement" : "Endorse this skill",
+          onclick: async (e) => {
+            e.stopPropagation();
+            await updateDoc(doc(db, "users", uid, "badges", b.id), {
+              endorsements: endorsed ? arrayRemove(state.uid) : arrayUnion(state.uid),
+            });
+            endorseBtn.classList.toggle("active", !endorsed);
+            endorseBtn.querySelector(".sb-endorse-count").textContent =
+              String((b.endorsements?.length || 0) + (endorsed ? -1 : 1));
+          },
+        }, el("i", { class: "ri-thumb-up-line" }), el("span", { class: "sb-endorse-count" }, String((b.endorsements || []).length))) : null;
+
+        const chip = el("div", { class: "sb-chip" },
+          el("div", { class: "sb-chip-info" },
+            el("span", { class: "sb-skill" }, b.name),
+            el("span", { class: "sb-level" }, b.level || ""),
+          ),
+          endorseBtn,
+        );
+        grid.appendChild(chip);
+      });
+      wrap.appendChild(grid);
+    }
+  } catch { wrap.appendChild(el("div", { class: "sb-empty" }, "Could not load badges")); }
+
+  container.appendChild(wrap);
+};
+
+const SKILL_LEVELS = ["Beginner", "Intermediate", "Advanced", "Expert"];
+
+const openAddBadge = (uid, parentWrap) => {
+  const overlay = el("div", { class: "ts-editor-overlay" });
+  const modal   = el("div", { class: "ts-editor-modal" });
+
+  modal.appendChild(el("div", { class: "ts-editor-head" },
+    el("h3", {}, "Add Skill Badge"),
+    el("button", { class: "icon-btn", onclick: () => overlay.remove() }, el("i", { class: "ri-close-line" })),
+  ));
+  modal.appendChild(el("div", { class: "ts-editor-body" },
+    el("label", {}, "Skill name", el("input", { type: "text", id: "badgeNameInp", placeholder: "e.g. React, Python, Docker" })),
+    el("label", {}, "Level",
+      (() => {
+        const sel = el("select", { id: "badgeLevelSel" });
+        SKILL_LEVELS.forEach((l) => sel.appendChild(el("option", { value: l }, l)));
+        return sel;
+      })(),
+    ),
+  ));
+  modal.appendChild(el("button", { class: "btn primary ts-save-btn", onclick: async () => {
+    const name  = (document.getElementById("badgeNameInp")?.value || "").trim();
+    const level = document.getElementById("badgeLevelSel")?.value || "Beginner";
+    if (!name) { toast("Enter a skill name"); return; }
+    await addDoc(collection(db, "users", uid, "badges"), { name, level, endorsements: [], createdAt: serverTimestamp() });
+    toast("Badge added!");
+    overlay.remove();
+    parentWrap.remove();
+  }}, "Add Badge"));
+
+  overlay.appendChild(modal);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+};
+
+// =========================================================================
+// 8. MENTORSHIP MATCHING
+// Route: #mentorship
+// Firestore: "mentorship" collection — one doc per user
+// =========================================================================
+export const renderMentorship = (root) => {
+  root.innerHTML = "";
+  root.appendChild(el("div", { class: "section-head" },
+    el("h2", {}, el("i", { class: "ri-user-heart-line" }), " Mentorship"),
+  ));
+
+  const wrap = el("div", { class: "mentorship-wrap" });
+  root.appendChild(wrap);
+
+  getDoc(doc(db, "mentorship", state.uid)).then((snap) => {
+    const myProfile = snap.exists() ? snap.data() : null;
+    wrap.appendChild(renderMyMentorProfile(myProfile));
+    wrap.appendChild(el("div", { class: "mentor-divider" },
+      el("h3", {}, myProfile?.role === "mentor" ? "People Looking for Mentorship" : "Available Mentors"),
+    ));
+    loadMentorMatches(wrap, myProfile);
+  });
+};
+
+const renderMyMentorProfile = (profile) => {
+  const card = el("div", { class: "mentor-my-card" });
+  card.appendChild(el("div", { class: "mentor-card-title" },
+    el("i", { class: "ri-user-settings-line" }), " My Mentorship Profile",
+  ));
+
+  if (profile) {
+    card.appendChild(el("div", { class: "mentor-profile-view" },
+      el("div", { class: "mp-role" },
+        el("span", { class: `mp-role-badge ${profile.role}` },
+          profile.role === "mentor" ? "Mentor" : "Mentee"),
+      ),
+      el("div", { class: "mp-info" },
+        el("div", { class: "mp-label" }, "Skills / Expertise"),
+        el("div", { class: "mp-val" }, profile.skills || "—"),
+        el("div", { class: "mp-label" }, "Goals"),
+        el("div", { class: "mp-val" }, profile.goals || "—"),
+        el("div", { class: "mp-label" }, "Availability"),
+        el("div", { class: "mp-val" }, profile.availability || "—"),
+      ),
+      el("button", { class: "btn ghost sm", onclick: () => openMentorEdit(profile, card) },
+        el("i", { class: "ri-edit-line" }), "Edit"),
+    ));
+  } else {
+    card.appendChild(el("div", { class: "mentor-setup-prompt" },
+      el("p", {}, "Set up your mentorship profile to connect with others."),
+      el("button", { class: "btn primary", onclick: () => openMentorEdit(null, card) },
+        el("i", { class: "ri-user-add-line" }), "Set up profile"),
+    ));
+  }
+  return card;
+};
+
+const openMentorEdit = (profile, card) => {
+  const overlay = el("div", { class: "ts-editor-overlay" });
+  const modal   = el("div", { class: "ts-editor-modal" });
+
+  modal.appendChild(el("div", { class: "ts-editor-head" },
+    el("h3", {}, "Mentorship Profile"),
+    el("button", { class: "icon-btn", onclick: () => overlay.remove() }, el("i", { class: "ri-close-line" })),
+  ));
+
+  let role = profile?.role || "mentee";
+  const roleToggle = el("div", { class: "seg mentor-role-toggle" },
+    (() => {
+      const mb = el("button", { class: role === "mentee" ? "active" : "" }, "I want a Mentor");
+      const mr = el("button", { class: role === "mentor" ? "active" : "" }, "I am a Mentor");
+      mb.onclick = () => { role = "mentee"; mb.classList.add("active"); mr.classList.remove("active"); };
+      mr.onclick = () => { role = "mentor"; mr.classList.add("active"); mb.classList.remove("active"); };
+      return [mb, mr];
+    })(),
+  );
+
+  modal.appendChild(el("div", { class: "ts-editor-body" },
+    el("div", { class: "mentor-role-section" }, el("div", { class: "ts-editor-label" }, "Your Role"), roleToggle),
+    el("label", {}, "Skills / Expertise",
+      el("input", { type: "text", id: "mentorSkillsInp", placeholder: "e.g. React, Python, system design", value: profile?.skills || "" })),
+    el("label", {}, "Goals",
+      el("textarea", { id: "mentorGoalsInp", placeholder: "What do you want to learn or help others with?", rows: "3" },
+        profile?.goals || "")),
+    el("label", {}, "Availability",
+      el("input", { type: "text", id: "mentorAvailInp", placeholder: "e.g. Weekends, 2 hrs/week", value: profile?.availability || "" })),
+  ));
+
+  modal.appendChild(el("button", { class: "btn primary ts-save-btn", onclick: async () => {
+    const data = {
+      uid: state.uid,
+      name: state.me?.name || "",
+      photoURL: state.me?.photoURL || "",
+      role,
+      skills:       (document.getElementById("mentorSkillsInp")?.value || "").trim(),
+      goals:        (document.getElementById("mentorGoalsInp")?.value  || "").trim(),
+      availability: (document.getElementById("mentorAvailInp")?.value  || "").trim(),
+      updatedAt: serverTimestamp(),
     };
-}
+    await setDoc(doc(db, "mentorship", state.uid), data, { merge: true });
+    toast("Profile saved!");
+    overlay.remove();
+    card.innerHTML = "";
+    card.appendChild(renderMyMentorProfile(data).children[0]); // refresh
+    card.appendChild(renderMyMentorProfile(data).children[1] || document.createTextNode(""));
+  }}, "Save profile"));
 
-
-/* =============================================================
-   1. CHAT CUSTOMIZATION
-   ============================================================= */
-
-const CHAT_COLORS = [
-    { name: "Default", value: null },
-    { name: "Sunset",  value: "#ff6b6b" },
-    { name: "Ocean",   value: "#3a86ff" },
-    { name: "Forest",  value: "#2a9d8f" },
-    { name: "Plum",    value: "#9d4edd" },
-    { name: "Honey",   value: "#f4a261" },
-    { name: "Rose",    value: "#e63946" },
-    { name: "Ink",     value: "#1d3557" },
-    { name: "Mint",    value: "#06d6a0" },
-    { name: "Slate",   value: "#6c757d" },
-    { name: "Cocoa",   value: "#7f5539" },
-    { name: "Cyan",    value: "#00b4d8" },
-    { name: "Coral",   value: "#ff8c61" },
-    { name: "Indigo",  value: "#5a189a" }
-];
-
-const CHAT_WALLPAPERS = [
-    { name: "None",     value: null },
-    { name: "Linen",    value: "linear-gradient(180deg, #fafafa 0%, #f0f0f0 100%)" },
-    { name: "Sunrise",  value: "linear-gradient(180deg, #ffd6a5 0%, #ffadad 100%)" },
-    { name: "Calm",     value: "linear-gradient(180deg, #caf0f8 0%, #ade8f4 100%)" },
-    { name: "Spring",   value: "linear-gradient(180deg, #d8f3dc 0%, #b7e4c7 100%)" },
-    { name: "Lavender", value: "linear-gradient(180deg, #e0c3fc 0%, #8ec5fc 100%)" },
-    { name: "Mocha",    value: "linear-gradient(180deg, #e9d8c4 0%, #c8a78b 100%)" },
-    { name: "Night",    value: "linear-gradient(180deg, #2c3e50 0%, #4ca1af 100%)" },
-    { name: "Peach",    value: "linear-gradient(180deg, #ffe5ec 0%, #ffc2d1 100%)" }
-];
-
-const ChatCustom = {
-    chatPrefsCache: new Map(),
-
-    keyFor(otherUid) {
-        const me = state.user?.uid;
-        if (!me || !otherUid) return null;
-        return [me, otherUid].sort().join("_");
-    },
-
-    localKey(chatId) { return `drop:chat-prefs:${chatId}`; },
-
-    load(chatId) {
-        if (!chatId) return null;
-        if (this.chatPrefsCache.has(chatId)) return this.chatPrefsCache.get(chatId);
-        try {
-            const raw = localStorage.getItem(this.localKey(chatId));
-            if (raw) {
-                const v = JSON.parse(raw);
-                this.chatPrefsCache.set(chatId, v);
-                return v;
-            }
-        } catch {}
-        return null;
-    },
-
-    save(chatId, prefs) {
-        this.chatPrefsCache.set(chatId, prefs);
-        try { localStorage.setItem(this.localKey(chatId), JSON.stringify(prefs)); } catch {}
-        const me = state.user?.uid;
-        if (me) {
-            F.setDoc(F.doc(db, "users", me, "chatPrefs", chatId), {
-                ...prefs,
-                updatedAt: F.serverTimestamp()
-            }, { merge: true }).catch(() => {});
-        }
-    },
-
-    apply(prefs) {
-        const thread = document.getElementById("view-thread");
-        if (!thread) return;
-        if (!prefs || (!prefs.accent && !prefs.bg)) {
-            thread.classList.remove("has-custom");
-            thread.style.removeProperty("--chat-accent");
-            thread.style.removeProperty("--chat-bg");
-            return;
-        }
-        thread.classList.add("has-custom");
-        if (prefs.accent) thread.style.setProperty("--chat-accent", prefs.accent);
-        else thread.style.removeProperty("--chat-accent");
-        if (prefs.bg) thread.style.setProperty("--chat-bg", prefs.bg);
-        else thread.style.removeProperty("--chat-bg");
-    },
-
-    injectButton() {
-        const header = document.querySelector("#view-thread .thread-header");
-        if (!header || header.querySelector(".chat-custom-btn")) return;
-        const btn = document.createElement("button");
-        btn.className = "chat-custom-btn";
-        btn.title = "Customize chat";
-        btn.setAttribute("aria-label", "Customize chat");
-        btn.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>`;
-        btn.addEventListener("click", () => this.openDialog());
-        const profileLink = header.querySelector("#thread-profile-link");
-        if (profileLink) header.insertBefore(btn, profileLink);
-        else header.appendChild(btn);
-    },
-
-    selectedColor: null,
-    selectedWallpaper: null,
-
-    openDialog() {
-        const otherUid = state.threadOtherUid;
-        if (!otherUid) { showToast("Open a chat first.", "default"); return; }
-        const chatId = this.keyFor(otherUid);
-        const current = this.load(chatId) || {};
-        this.selectedColor = current.accent ?? null;
-        this.selectedWallpaper = current.bg ?? null;
-        this.renderColorGrid();
-        this.renderWallpaperGrid();
-        openDialog("chat-custom-dialog");
-    },
-
-    renderColorGrid() {
-        const grid = document.getElementById("cc-color-grid");
-        if (!grid) return;
-        grid.innerHTML = CHAT_COLORS.map((c, i) => {
-            const sel = (this.selectedColor === c.value) ? "selected" : "";
-            const bg = c.value || "var(--accent)";
-            const isDefault = c.value === null ? `<span style="position:absolute;font-size:14px;color:white;text-shadow:0 1px 2px rgba(0,0,0,.5);font-weight:800;display:flex;align-items:center;justify-content:center;width:100%;height:100%;">×</span>` : "";
-            return `<div class="cc-swatch ${sel}" data-idx="${i}" style="--swatch:${bg};position:relative;" title="${escapeHtml(c.name)}">${isDefault}</div>`;
-        }).join("");
-        grid.querySelectorAll(".cc-swatch").forEach(el => {
-            el.addEventListener("click", () => {
-                this.selectedColor = CHAT_COLORS[+el.dataset.idx].value;
-                grid.querySelectorAll(".cc-swatch").forEach(x => x.classList.remove("selected"));
-                el.classList.add("selected");
-            });
-        });
-    },
-
-    renderWallpaperGrid() {
-        const grid = document.getElementById("cc-wallpaper-grid");
-        if (!grid) return;
-        grid.innerHTML = CHAT_WALLPAPERS.map((w, i) => {
-            const sel = (this.selectedWallpaper === w.value) ? "selected" : "";
-            const style = w.value ? `background:${w.value};` : "";
-            return `<div class="cc-wallpaper ${sel}" data-idx="${i}" style="${style}"><span class="cc-wallpaper-label">${escapeHtml(w.name)}</span></div>`;
-        }).join("");
-        grid.querySelectorAll(".cc-wallpaper").forEach(el => {
-            el.addEventListener("click", () => {
-                this.selectedWallpaper = CHAT_WALLPAPERS[+el.dataset.idx].value;
-                grid.querySelectorAll(".cc-wallpaper").forEach(x => x.classList.remove("selected"));
-                el.classList.add("selected");
-            });
-        });
-    },
-
-    onRouteEnter() {
-        const m = currentHash().match(/^#\/thread\/(.+)$/);
-        // If we just LEFT a thread, strip the custom class+vars immediately
-        // so the next chat we open doesn't briefly show the previous one's
-        // color or wallpaper.
-        if (!m) {
-            const thread = document.getElementById("view-thread");
-            if (thread) {
-                thread.classList.remove("has-custom");
-                thread.style.removeProperty("--chat-accent");
-                thread.style.removeProperty("--chat-bg");
-            }
-            return;
-        }
-        const otherUid = decodeURIComponent(m[1]);
-        const me = state.user?.uid;
-        if (me) {
-            // Apply SYNCHRONOUSLY on hashchange (parse uid from hash —
-            // do NOT wait for rAF or state.threadOtherUid). This is what
-            // eliminates the "half background color before it changes
-            // fully" flicker when opening a customized chat.
-            const chatId = [me, otherUid].sort().join("_");
-            this.apply(this.load(chatId));
-        }
-        // Header DOM may need a frame to settle — only the button
-        // injection is deferred.
-        requestAnimationFrame(() => this.injectButton());
-    },
-
-    init() {
-        // Use capture phase (3rd arg = true) so this handler fires BEFORE
-        // the router's bubble-phase hashchange listener. That guarantees
-        // has-custom + CSS vars are applied to #view-thread while it is
-        // still hidden, so no white flash is visible when it becomes shown.
-        window.addEventListener("hashchange", () => this.onRouteEnter(), true);
-        // Run once at boot in case we're already on a thread.
-        this.onRouteEnter();
-
-        _on(document.getElementById("cc-save"), "click", () => {
-            const otherUid = state.threadOtherUid;
-            if (!otherUid) return;
-            const chatId = this.keyFor(otherUid);
-            const prefs = { accent: this.selectedColor, bg: this.selectedWallpaper };
-            this.save(chatId, prefs);
-            this.apply(prefs);
-            closeDialog("chat-custom-dialog");
-            showToast("Chat customized.");
-        });
-        _on(document.getElementById("cc-reset"), "click", () => {
-            this.selectedColor = null;
-            this.selectedWallpaper = null;
-            this.renderColorGrid();
-            this.renderWallpaperGrid();
-        });
-    }
+  overlay.appendChild(modal);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
 };
 
-
-/* =============================================================
-   2. SONGS ON DROPS
-   ============================================================= */
-
-const SONG_LIBRARY = [
-    { id: "cc1",  title: "Wave",                          artist: "Central Cee",       mood: "energy", art: ["#1a1a2e", "#16213e"], url: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/db/e3/6a/dbe36a34-40e9-41b0-49bc-9e531ab74850/mzaf_17877855992015873512.plus.aac.p.m4a" },
-    { id: "as1",  title: "Rush",                          artist: "Ayra Starr",         mood: "happy",  art: ["#ff6b6b", "#c0392b"], url: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/a0/0c/07/a00c0745-9162-1e7f-af70-b92f891a728e/mzaf_12267370392753596352.plus.aac.p.m4a" },
-    { id: "bb1",  title: "Last Last",                     artist: "Burna Boy",          mood: "chill",  art: ["#f39c12", "#d35400"], url: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/98/27/c3/9827c314-7ee0-7f70-2528-b904f3914188/mzaf_3677227575880735836.plus.aac.p.m4a" },
-    { id: "rm1",  title: "Baby (Is It A Crime)",          artist: "Rema",               mood: "happy",  art: ["#27ae60", "#1e8449"], url: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/ab/59/66/ab59667e-c7fb-4abe-4975-c578360826c7/mzaf_5756032370307881213.plus.aac.p.m4a" },
-    { id: "wk1",  title: "Essence (feat. Tems)",          artist: "Wizkid",             mood: "chill",  art: ["#8e6b3e", "#5d4e37"], url: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/b3/dc/ba/b3dcba73-7f33-9abe-089c-73557a6dcb54/mzaf_16412591162283722395.plus.aac.p.m4a" },
-    { id: "dr1",  title: "Hold On, We're Going Home",     artist: "Drake",              mood: "moody",  art: ["#2c2c54", "#1a1a3e"], url: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview115/v4/e1/9b/b6/e19bb624-9cd8-021b-f771-e51629057774/mzaf_13878644440815306616.plus.aac.p.m4a" },
-    { id: "jc1",  title: "All I Want Is You",             artist: "J. Cole",            mood: "moody",  art: ["#6d4c41", "#4e342e"], url: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/5c/76/4f/5c764f13-36da-d47b-1fe1-d895f0d42636/mzaf_14479033350538581906.plus.aac.p.m4a" },
-    { id: "sz1",  title: "Saturn",                        artist: "SZA",                mood: "chill",  art: ["#7b2d8b", "#4a0072"], url: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/7c/28/b3/7c28b3ed-9aa9-6454-92c6-e46d20849bed/mzaf_518591709818271733.plus.aac.p.m4a" },
-    { id: "tm1",  title: "What You Need",                 artist: "Tems",               mood: "happy",  art: ["#00897b", "#00574b"], url: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/7e/3c/25/7e3c2565-b83d-e690-49c1-92298bd2a244/mzaf_2428036131779969369.plus.aac.p.m4a" },
-    { id: "ak1",  title: "Jogodo",                        artist: "Asake",              mood: "energy", art: ["#e67e22", "#d35400"], url: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/82/42/7a/82427aaa-0012-28f2-a1d7-f4dc58b7aa16/mzaf_8312211163811258783.plus.aac.p.m4a" },
-    { id: "dv1",  title: "Raindance",                     artist: "Dave",               mood: "moody",  art: ["#1565c0", "#0d47a1"], url: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/d6/f4/71/d6f47137-43b6-8dce-4b2c-0827045c68ae/mzaf_15227156188895023873.plus.aac.p.m4a" },
-    { id: "sm1",  title: "Own It (feat. Ed Sheeran & Burna Boy)", artist: "Stormzy",   mood: "energy", art: ["#b71c1c", "#7f0000"], url: "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview116/v4/08/75/df/0875df9b-1ed2-ea92-8c57-02571d42f89a/mzaf_17076102039735527644.plus.aac.p.m4a" }
-];
-
-// SVG icons used for play/pause toggling — kept here so every spot
-// (song-picker rows + post badges) renders the exact same shape.
-const SVG_PLAY  = `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>`;
-const SVG_PAUSE = `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>`;
-const SVG_NOTE  = `<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`;
-
-// Soft background volume — quiet enough to feel ambient, not intrusive.
-const SONG_AUTO_VOL = 0.15;
-const SONG_TAP_VOL  = 0.3;
-
-const Songs = {
-    pendingSong: null,
-    activeAudio: null,
-    activeBadge: null,
-    activeRow: null,
-    activeCard: null,
-    activeRowBtn: null,
-    activeBadgeBtn: null,
-    userPaused: new Set(),   // post IDs the user explicitly paused — don't auto-restart
-    observer: null,
-    pendingKey: "drop:pending-song",
-
-    loadPending() {
-        try {
-            const raw = localStorage.getItem(this.pendingKey);
-            if (raw) this.pendingSong = JSON.parse(raw);
-        } catch {}
-    },
-    savePending() {
-        try {
-            if (this.pendingSong) localStorage.setItem(this.pendingKey, JSON.stringify(this.pendingSong));
-            else localStorage.removeItem(this.pendingKey);
-        } catch {}
-    },
-
-    // ----- Add-song pill on the capture screen -----
-    injectAddPill() {
-        // Only do work if we're actually on the capture route.
-        if (currentHash() !== "#/capture") return;
-        const previewBlock = document.getElementById("capture-preview-block");
-        if (!previewBlock) return;
-        if (previewBlock.querySelector(".add-song-pill")) {
-            this.refreshAddPill();
-            return;
-        }
-        if (!previewBlock.style.position) previewBlock.style.position = "relative";
-        const pill = document.createElement("button");
-        pill.type = "button";
-        pill.className = "add-song-pill";
-        pill.innerHTML = this.pillHTML();
-        pill.addEventListener("click", () => this.openPicker());
-        previewBlock.appendChild(pill);
-    },
-
-    pillHTML() {
-        const s = this.pendingSong;
-        const icon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`;
-        return `${icon}<span>${s ? escapeHtml(s.title) : "Add song"}</span>`;
-    },
-
-    refreshAddPill() {
-        const pill = document.querySelector("#capture-preview-block .add-song-pill");
-        if (!pill) return;
-        pill.innerHTML = this.pillHTML();
-        pill.classList.toggle("has-song", !!this.pendingSong);
-    },
-
-    activeMood: "all",
-    activeQuery: "",
-
-    openPicker() {
-        this.renderPickerList();
-        openDialog("song-picker-dialog");
-    },
-
-    filteredSongs() {
-        const q = this.activeQuery.trim().toLowerCase();
-        return SONG_LIBRARY.filter(s => {
-            if (this.activeMood !== "all" && s.mood !== this.activeMood) return false;
-            if (q && !(`${s.title} ${s.artist} ${s.mood}`).toLowerCase().includes(q)) return false;
-            return true;
-        });
-    },
-
-    renderPickerList() {
-        const list = document.getElementById("song-picker-list");
-        if (!list) return;
-        const songs = this.filteredSongs();
-        if (!songs.length) {
-            list.innerHTML = `<li class="song-picker-empty">No songs match. Try another mood.</li>`;
-            return;
-        }
-        const selectedId = this.pendingSong?.id;
-        list.innerHTML = songs.map(s => {
-            const sel = (s.id === selectedId) ? "selected" : "";
-            const initial = s.title.charAt(0).toUpperCase();
-            return `<li class="song-row ${sel}" data-id="${escapeHtml(s.id)}">
-                <div class="song-art" style="--art-a:${s.art[0]};--art-b:${s.art[1]}">${escapeHtml(initial)}</div>
-                <div class="song-meta">
-                    <div class="song-title">${escapeHtml(s.title)}</div>
-                    <div class="song-artist">${escapeHtml(s.artist)} · ${escapeHtml(s.mood)}</div>
-                </div>
-                <button type="button" class="song-play" data-action="play" aria-label="Play preview">${SVG_PLAY}</button>
-            </li>`;
-        }).join("");
-
-        list.querySelectorAll(".song-row").forEach(row => {
-            const id = row.dataset.id;
-            const song = SONG_LIBRARY.find(s => s.id === id);
-            row.addEventListener("click", (e) => {
-                if (e.target.closest('[data-action="play"]')) {
-                    this.previewSong(song, row);
-                    return;
-                }
-                this.selectSong(song);
-                list.querySelectorAll(".song-row").forEach(r => r.classList.remove("selected"));
-                row.classList.add("selected");
-            });
-        });
-    },
-
-    selectSong(song) {
-        this.pendingSong = song;
-        this.savePending();
-        this.refreshAddPill();
-    },
-
-    // Swap the icon inside a play/pause button. Falls back gracefully if
-    // the element no longer exists (e.g. the picker was re-rendered).
-    setIcon(btn, isPlaying) {
-        if (!btn) return;
-        btn.innerHTML = isPlaying ? SVG_PAUSE : SVG_PLAY;
-        btn.setAttribute("aria-label", isPlaying ? "Pause preview" : "Play preview");
-    },
-
-    previewSong(song, row) {
-        const btn = row.querySelector(".song-play");
-        // Tap the same row again => stop.
-        if (this.activeAudio && this.activeRow === row) {
-            this.stopActive();
-            return;
-        }
-        this.stopActive();
-        const audio = new Audio(song.url);
-        // NOTE: do NOT set `audio.crossOrigin = "anonymous"`. SoundHelix
-        // (and most demo MP3 hosts) don't return CORS headers; opting
-        // into CORS mode makes the browser refuse the load with
-        // "error loading preview". Default no-CORS playback is fine.
-        audio.preload = "metadata";
-        audio.volume = SONG_TAP_VOL;
-        audio.play().then(() => {
-            row.classList.add("playing");
-            this.activeAudio = audio;
-            this.activeRow = row;
-            this.activeRowBtn = btn;
-            this.setIcon(btn, true);
-        }).catch(() => showToast("Couldn't play preview.", "error"));
-        audio.onended = () => this.stopActive();
-    },
-
-    stopActive() {
-        if (this.activeAudio) {
-            try { this.activeAudio.pause(); } catch {}
-            this.activeAudio = null;
-        }
-        if (this.activeRow) {
-            this.activeRow.classList.remove("playing");
-            this.activeRow = null;
-        }
-        if (this.activeRowBtn) {
-            this.setIcon(this.activeRowBtn, false);
-            this.activeRowBtn = null;
-        }
-        if (this.activeBadge) {
-            this.activeBadge.classList.remove("playing");
-            this.activeBadge = null;
-        }
-        if (this.activeBadgeBtn) {
-            this.activeBadgeBtn.innerHTML = SVG_PLAY;
-            this.activeBadgeBtn = null;
-        }
-        if (this.activeCard) {
-            const meta = this.activeCard.querySelector(".post-song-meta");
-            if (meta) meta.classList.remove("playing");
-            this.activeCard = null;
-        }
-    },
-
-    // ----- Song badge on a rendered post -----
-    enhancePostCard(card) {
-        if (!card) return;
-        const postId = card.dataset.postId;
-        if (!postId) return;
-        // Idempotency check is BY CHILD PRESENCE, not a dataset flag —
-        // because applyFeedRender wipes innerHTML on patches, the dataset
-        // would survive but the badge would not. Using querySelector keeps
-        // the enhancer correct after every wipe AND prevents re-injection
-        // ping-pong with the scoped MutationObserver.
-        if (card.querySelector(".post-song-badge")) return;
-        this.fetchPostSong(postId).then(song => {
-            if (!song) return;
-            // Re-check the card is still in the DOM and still un-enhanced
-            // by the time the async lookup resolves.
-            if (!card.isConnected || card.querySelector(".post-song-badge")) return;
-            const wrap = card.querySelector(".post-image-wrap");
-            if (!wrap) return;
-            if (!wrap.style.position) wrap.style.position = "relative";
-
-            // Floating badge over the photo — now with explicit play/pause
-            // toggle button so the icon swap is visible and obvious.
-            const badge = document.createElement("button");
-            badge.type = "button";
-            badge.className = "post-song-badge";
-            badge.dataset.postId = postId;
-            badge.innerHTML = `
-                <span class="psb-disc"></span>
-                <span class="psb-text"><strong>${escapeHtml(song.title)}</strong>${escapeHtml(song.artist)}</span>
-                <span class="psb-toggle" aria-hidden="true">${SVG_PLAY}</span>`;
-            badge.addEventListener("click", (e) => {
-                e.stopPropagation();
-                this.toggleBadgePlayback(badge, song, /*manual*/ true);
-            });
-            wrap.appendChild(badge);
-
-            // Small song line in the post details (under caption / actions).
-            // Idempotent — only inject if not present.
-            if (!card.querySelector(".post-song-meta")) {
-                const meta = document.createElement("div");
-                meta.className = "post-song-meta";
-                meta.innerHTML = `${SVG_NOTE}<span class="psm-text"><strong>${escapeHtml(song.title)}</strong> · ${escapeHtml(song.artist)}</span>`;
-                meta.addEventListener("click", (e) => {
-                    e.stopPropagation();
-                    this.toggleBadgePlayback(badge, song, true);
-                });
-                // Place after .post-caption if it exists, otherwise after
-                // .post-actions, otherwise at the end of the card.
-                const cap = card.querySelector(".post-caption");
-                const actions = card.querySelector(".post-actions");
-                if (cap && cap.parentNode) cap.parentNode.insertBefore(meta, cap.nextSibling);
-                else if (actions && actions.parentNode) actions.parentNode.insertBefore(meta, actions.nextSibling);
-                else card.appendChild(meta);
-            }
-
-            // Scroll-into-view auto-play. One song at a time, soft volume.
-            this.observeCard(card);
-        }).catch(() => {});
-    },
-
-    // Single shared IntersectionObserver. Auto-plays the song attached to
-    // a post when it scrolls 60% into view, pauses when it leaves.
-    ensureObserver() {
-        if (this.observer) return;
-        if (typeof IntersectionObserver === "undefined") return;
-        this.observer = new IntersectionObserver((entries) => {
-            for (const entry of entries) {
-                const card = entry.target;
-                const postId = card.dataset.postId;
-                if (!postId) continue;
-                if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
-                    if (this.userPaused.has(postId)) continue;
-                    if (this.activeCard === card) continue;
-                    const badge = card.querySelector(".post-song-badge");
-                    if (!badge) continue;
-                    const song = this.songCache.get(postId);
-                    if (!song) continue;
-                    this.startBadgePlayback(badge, song, SONG_AUTO_VOL, card);
-                } else if (entry.intersectionRatio < 0.3) {
-                    if (this.activeCard === card) this.stopActive();
-                }
-            }
-        }, { threshold: [0, 0.3, 0.6, 0.9] });
-    },
-
-    observeCard(card) {
-        this.ensureObserver();
-        if (!this.observer) return;
-        if (card.dataset.songObserved) return;
-        card.dataset.songObserved = "1";
-        this.observer.observe(card);
-    },
-
-    songCache: new Map(),
-    fetchedNotFound: new Set(),
-    inflight: new Map(),
-
-    async fetchPostSong(postId) {
-        if (this.songCache.has(postId)) return this.songCache.get(postId);
-        if (this.fetchedNotFound.has(postId)) return null;
-        if (this.inflight.has(postId)) return this.inflight.get(postId);
-        const p = (async () => {
-            try {
-                const snap = await F.getDoc(F.doc(db, "posts", postId));
-                const data = snap.data();
-                if (data && data.songId) {
-                    const song = SONG_LIBRARY.find(s => s.id === data.songId)
-                        || { id: data.songId, title: data.songTitle || "Song", artist: data.songArtist || "", url: data.songUrl, art: ["#888", "#444"], mood: "any" };
-                    this.songCache.set(postId, song);
-                    return song;
-                }
-            } catch {}
-            this.fetchedNotFound.add(postId);
-            return null;
-        })();
-        this.inflight.set(postId, p);
-        try { return await p; } finally { this.inflight.delete(postId); }
-    },
-
-    // Tap on the badge / meta line. `manual=true` means we should mark
-    // the post in `userPaused` when stopping so scroll won't restart it.
-    toggleBadgePlayback(badge, song, manual) {
-        const postId = badge.dataset.postId;
-        if (this.activeAudio && this.activeBadge === badge) {
-            if (manual && postId) this.userPaused.add(postId);
-            this.stopActive();
-            return;
-        }
-        if (manual && postId) this.userPaused.delete(postId);
-        const card = badge.closest(".post-card");
-        this.startBadgePlayback(badge, song, SONG_TAP_VOL, card);
-    },
-
-    // Shared play routine used by both manual taps and the scroll-into-view
-    // observer. Stops any other active audio first, swaps the play icon
-    // to the pause icon, and updates the playing class on the badge / meta.
-    startBadgePlayback(badge, song, volume, card) {
-        if (this.activeAudio && this.activeBadge === badge) return;
-        this.stopActive();
-        if (!song?.url) return;
-        const audio = new Audio(song.url);
-        audio.preload = "metadata";
-        audio.volume = (typeof volume === "number") ? volume : SONG_AUTO_VOL;
-        // Set active state BEFORE play() so the IntersectionObserver can
-        // stop the audio immediately if the card scrolls out while the
-        // browser is still buffering (play() is async on mobile).
-        this.activeAudio = audio;
-        this.activeBadge = badge;
-        this.activeCard = card || badge.closest(".post-card");
-        audio.play().then(() => {
-            badge.classList.add("playing");
-            const toggle = badge.querySelector(".psb-toggle");
-            if (toggle) {
-                toggle.innerHTML = SVG_PAUSE;
-                this.activeBadgeBtn = toggle;
-            }
-            // Light up the small meta line too, if it exists.
-            if (this.activeCard) {
-                const meta = this.activeCard.querySelector(".post-song-meta");
-                if (meta) meta.classList.add("playing");
-            }
-        }).catch(() => {
-            // Auto-play blocked — clear state so we don't hold a reference
-            // to a never-playing audio object.
-            this.activeAudio = null;
-            this.activeBadge = null;
-            this.activeCard = null;
-        });
-        audio.onended = () => this.stopActive();
-    },
-
-    _ownPostsBound: false,
-    watchOwnNewPosts() {
-        if (this._ownPostsBound) return;
-        const me = state.user?.uid;
-        if (!me) return;
-        this._ownPostsBound = true;
-
-        const seen = new Set();
-        let primed = false;
-        const q = F.query(
-            F.collection(db, "posts"),
-            F.where("uid", "==", me),
-            F.orderBy("createdAt", "desc"),
-            F.limit(5)
-        );
-        F.onSnapshot(q, (snap) => {
-            // PRIMING: on the very first delivery, mark whatever already
-            // exists as "seen" without trying to attach a song. This is the
-            // ONLY thing the previous version got wrong — it returned early
-            // even when the user had zero posts, so the very first drop the
-            // user ever made never received its pending song.
-            if (!primed) {
-                snap.forEach(d => seen.add(d.id));
-                primed = true;
-                return;
-            }
-            // Use docChanges so we react to genuine additions only —
-            // not re-deliveries of cached docs.
-            snap.docChanges().forEach(change => {
-                if (change.type !== "added") return;
-                const d = change.doc;
-                if (seen.has(d.id)) return;
-                seen.add(d.id);
-                const data = d.data() || {};
-                if (this.pendingSong && !data.songId) {
-                    const song = this.pendingSong;
-                    F.updateDoc(F.doc(db, "posts", d.id), {
-                        songId: song.id,
-                        songTitle: song.title,
-                        songArtist: song.artist,
-                        songUrl: song.url
-                    }).then(() => {
-                        showToast(`Added "${song.title}" to your drop`);
-                        this.pendingSong = null;
-                        this.savePending();
-                        this.refreshAddPill();
-                    }).catch(() => {});
-                }
-            });
-        }, () => {});
-    },
-
-    // Scoped enhancer: scan only the feed grid, never the whole body.
-    scanFeed: rafOnce(function () {
-        const grid = document.getElementById("feed-grid");
-        if (!grid) return;
-        grid.querySelectorAll(".post-card").forEach(c => Songs.enhancePostCard(c));
-    }),
-
-    init() {
-        this.loadPending();
-
-        // Picker dialog wiring
-        _on(document.getElementById("song-search-input"), "input", debounce((e) => {
-            this.activeQuery = e.target.value || "";
-            this.renderPickerList();
-        }, 150));
-        document.querySelectorAll(".song-picker-tabs .song-tab").forEach(tab => {
-            tab.addEventListener("click", () => {
-                document.querySelectorAll(".song-picker-tabs .song-tab").forEach(t => t.classList.remove("active"));
-                tab.classList.add("active");
-                this.activeMood = tab.dataset.mood;
-                this.renderPickerList();
-            });
-        });
-        _on(document.getElementById("song-picker-clear"), "click", () => {
-            this.pendingSong = null;
-            this.savePending();
-            this.refreshAddPill();
-            this.renderPickerList();
-            showToast("Song removed.");
-        });
-        _on(document.getElementById("song-picker-done"), "click", () => {
-            this.stopActive();
-            closeDialog("song-picker-dialog");
-        });
-
-        // Scoped MutationObserver: only the feed grid, only childList
-        // (no subtree, no attribute filter). Fires when post cards are
-        // added/removed OR when applyFeedRender patches a card's inner
-        // HTML (which removes-then-adds children of #feed-grid > article).
-        const attachFeedObserver = () => {
-            const grid = document.getElementById("feed-grid");
-            if (!grid || grid.dataset.songObsBound) return;
-            grid.dataset.songObsBound = "1";
-            const obs = new MutationObserver(() => this.scanFeed());
-            // childList + subtree on the GRID (not body) is safe: the grid
-            // only contains post cards, and rafOnce coalesces bursts.
-            obs.observe(grid, { childList: true, subtree: true });
-            this.scanFeed();
-        };
-
-        // The feed grid may not exist yet at boot. Try on every hashchange
-        // until we find it, then bind once.
-        window.addEventListener("hashchange", () => {
-            if (currentHash() === "#/capture") this.injectAddPill();
-            attachFeedObserver();
-        });
-        attachFeedObserver();
-        if (currentHash() === "#/capture") this.injectAddPill();
-
-        // Stop audio on navigation
-        onHash(() => this.stopActive());
-
-        // Start listening for our own new posts to attach pending song.
-        // Auth may not be ready at module-init time — poll briefly until it is.
-        const tryBind = () => this.watchOwnNewPosts();
-        tryBind();
-        if (!this._ownPostsBound) {
-            let attempts = 0;
-            const iv = setInterval(() => {
-                attempts++;
-                tryBind();
-                if (this._ownPostsBound || attempts > 30) clearInterval(iv);
-            }, 1000);
-        }
+const loadMentorMatches = async (wrap, myProfile) => {
+  const oppositeRole = !myProfile || myProfile.role === "mentee" ? "mentor" : "mentee";
+  try {
+    const snap = await getDocs(
+      query(collection(db, "mentorship"), where("role", "==", oppositeRole), limit(20)),
+    );
+    if (snap.empty) {
+      wrap.appendChild(el("div", { class: "empty" },
+        el("i", { class: "ri-user-search-line" }),
+        el("div", { class: "t" }, "No matches yet"),
+        el("div", {}, "Be the first to set up a profile!"),
+      ));
+      return;
     }
+    const grid = el("div", { class: "mentor-grid" });
+    snap.docs.forEach((d) => {
+      const m = d.data();
+      if (m.uid === state.uid) return;
+      grid.appendChild(el("div", { class: "mentor-card" },
+        el("img", { class: "avatar md", src: m.photoURL || avatarFor({ uid: m.uid }) }),
+        el("div", { class: "mentor-card-info" },
+          el("div", { class: "mentor-card-name" }, m.name || "User"),
+          el("span", { class: `mp-role-badge ${m.role}` }, m.role === "mentor" ? "Mentor" : "Mentee"),
+          m.skills ? el("div", { class: "mentor-card-skills" }, el("i", { class: "ri-code-s-slash-line" }), " " + m.skills) : null,
+          m.availability ? el("div", { class: "mentor-card-avail" }, el("i", { class: "ri-time-line" }), " " + m.availability) : null,
+        ),
+        el("button", { class: "btn primary sm", onclick: () => {
+          location.hash = `#profile/${m.uid}`;
+        }}, "View profile"),
+        el("button", { class: "btn ghost sm", onclick: async () => {
+          if (!m.uid) return;
+          await writeNotif(m.uid, "message", { text: "I'd like to connect for mentorship!" }).catch(() => {});
+          location.hash = `#chats/${m.uid}`;
+        }}, el("i", { class: "ri-chat-3-line" }), "Message"),
+      ));
+    });
+    wrap.appendChild(grid);
+  } catch (err) {
+    wrap.appendChild(el("div", { class: "empty" }, el("div", { class: "t" }, "Could not load matches")));
+  }
 };
 
+// =========================================================================
+// 9. CONSTELLATION VIEW — visual topic cluster for Explore
+// Call this from inside renderExplore to add a "Constellation" tab
+// =========================================================================
+export const renderConstellation = async (container) => {
+  container.innerHTML = "";
+  const wrap = el("div", { class: "constellation-wrap" });
+  container.appendChild(wrap);
 
-/* =============================================================
-   3. REPLY DROPS
-   ============================================================= */
+  const snap = await getDocs(query(collection(db, "posts"), orderBy("createdAt", "desc"), limit(100)));
+  const tagCounts = {};
+  snap.docs.forEach((d) => {
+    const tags = d.data().hashtags || [];
+    tags.forEach((t) => { tagCounts[t] = (tagCounts[t] || 0) + 1; });
+  });
 
-const ReplyDrops = {
-    bannerCache: new Map(),    // postId -> parent data | null
+  const sorted = Object.entries(tagCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20);
 
-    enhancePostCard(card) {
-        if (!card) return;
-        const postId = card.dataset.postId;
-        if (!postId) return;
+  if (!sorted.length) {
+    wrap.appendChild(el("div", { class: "empty" },
+      el("i", { class: "ri-planet-line" }),
+      el("div", { class: "t" }, "No hashtags yet"),
+    ));
+    return;
+  }
 
-        // Reply button (idempotent by child presence)
-        const actions = card.querySelector(".post-actions");
-        if (actions && !actions.querySelector(".reply-drop-btn")) {
-            const btn = document.createElement("button");
-            btn.className = "reply-drop-btn";
-            btn.type = "button";
-            btn.title = "Reply with a photo";
-            btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg> Reply`;
-            btn.addEventListener("click", (e) => {
-                e.stopPropagation();
-                this.triggerReply(postId, card);
-            });
-            actions.appendChild(btn);
-        }
+  const maxCount = sorted[0][1];
+  wrap.appendChild(el("div", { class: "constellation-header" },
+    el("i", { class: "ri-planet-line" }), " Topic Constellation",
+    el("p", { style: "color:var(--text-mute);font-size:13px;margin:4px 0 0;" },
+      "Bigger = more posts · Click a topic to explore it"),
+  ));
 
-        // Banner (cached lookup so we don't refetch on every snapshot)
-        this.maybeRenderReplyBanner(card, postId);
-    },
+  const galaxy = el("div", { class: "galaxy-wrap" });
+  wrap.appendChild(galaxy);
 
-    async maybeRenderReplyBanner(card, postId) {
-        if (card.querySelector(".reply-drop-banner")) return;
-        try {
-            let parent = this.bannerCache.get(postId);
-            if (parent === undefined) {
-                const snap = await F.getDoc(F.doc(db, "posts", postId));
-                const data = snap.data();
-                if (!data || !data.replyToPostId) {
-                    this.bannerCache.set(postId, null);
-                    return;
-                }
-                const parentSnap = await F.getDoc(F.doc(db, "posts", data.replyToPostId));
-                parent = parentSnap.data() || null;
-                this.bannerCache.set(postId, parent);
-            }
-            if (!parent) return;
-            if (!card.isConnected || card.querySelector(".reply-drop-banner")) return;
-            const banner = document.createElement("div");
-            banner.className = "reply-drop-banner";
-            const thumb = parent.imageUrl || (parent.images && parent.images[0]) || "";
-            banner.innerHTML = `${thumb ? `<img class="rdb-thumb" src="${escapeHtml(thumb)}" alt="" />` : ""} in reply to <strong style="margin-left:4px;">@${escapeHtml(parent.username || "user")}</strong>`;
-            const header = card.querySelector(".post-header");
-            if (header) header.parentNode.insertBefore(banner, header);
-            else card.prepend(banner);
-            card.classList.add("reply-drop");
-        } catch {}
-    },
-
-    pendingFile: null,
-    pendingParent: null,
-
-    async triggerReply(postId, card) {
-        this.pendingParent = postId;
-        const input = document.createElement("input");
-        input.type = "file";
-        input.accept = "image/*";
-        input.style.display = "none";
-        document.body.appendChild(input);
-        input.addEventListener("change", async () => {
-            const file = input.files?.[0];
-            input.remove();
-            if (!file) return;
-            await this.uploadAndPost(file, postId);
-        }, { once: true });
-        input.click();
-    },
-
-    async uploadAndPost(file, parentPostId) {
-        if (!state.user?.uid) { showToast("Please sign in.", "error"); return; }
-        showToast("Uploading reply…");
-        try {
-            const url = await uploadToCloudinary(file);
-            const parentSnap = await F.getDoc(F.doc(db, "posts", parentPostId));
-            const parent = parentSnap.data() || {};
-            const newDoc = {
-                uid: state.user.uid,
-                username: state.profile?.username || "user",
-                imageUrl: url,
-                images: [url],
-                caption: `Reply to @${parent.username || "user"}`,
-                promptText: parent.promptText || "",
-                promptDate: parent.promptDate || todayKey(),
-                createdAt: F.serverTimestamp(),
-                isOnTime: false,
-                isReplyDrop: true,
-                replyToPostId: parentPostId,
-                replyToUid: parent.uid || null,
-                replyToUsername: parent.username || null,
-                likes: 0,
-                likedBy: [],
-                commentsCount: 0
-            };
-            const ref = await F.addDoc(F.collection(db, "posts"), newDoc);
-            if (parent.uid && parent.uid !== state.user.uid) {
-                await F.addDoc(F.collection(db, "users", parent.uid, "notifications"), {
-                    type: "reply_drop",
-                    fromUid: state.user.uid,
-                    fromUsername: state.profile?.username || "user",
-                    postId: ref.id,
-                    parentPostId,
-                    createdAt: F.serverTimestamp(),
-                    seen: false
-                }).catch(() => {});
-            }
-            showToast("Reply drop posted!");
-        } catch (e) {
-            console.error(e);
-            showToast("Couldn't post reply.", "error");
-        }
-    },
-
-    scanFeed: rafOnce(function () {
-        const grid = document.getElementById("feed-grid");
-        if (!grid) return;
-        grid.querySelectorAll(".post-card").forEach(c => ReplyDrops.enhancePostCard(c));
-    }),
-
-    init() {
-        // Same scoped strategy as Songs: observe ONLY #feed-grid.
-        const attachFeedObserver = () => {
-            const grid = document.getElementById("feed-grid");
-            if (!grid || grid.dataset.replyObsBound) return;
-            grid.dataset.replyObsBound = "1";
-            const obs = new MutationObserver(() => this.scanFeed());
-            obs.observe(grid, { childList: true, subtree: true });
-            this.scanFeed();
-        };
-        onHash(attachFeedObserver);
-        attachFeedObserver();
-    }
+  sorted.forEach(([tag, count], i) => {
+    const size   = 32 + Math.round((count / maxCount) * 60);
+    const angle  = (i / sorted.length) * 360;
+    const radius = 120 + (i % 3) * 60;
+    const x      = 50 + radius * Math.cos((angle * Math.PI) / 180) / 5;
+    const y      = 50 + radius * Math.sin((angle * Math.PI) / 180) / 5;
+    const node   = el("button", {
+      class: "galaxy-node",
+      style: `width:${size}px;height:${size}px;left:${x}%;top:${y}%;font-size:${10 + Math.round(count / maxCount * 6)}px;`,
+      title: `#${tag} — ${count} posts`,
+      onclick: () => { location.hash = `#explore/tag/${tag}`; },
+    }, `#${tag}`);
+    galaxy.appendChild(node);
+  });
 };
 
+// =========================================================================
+// PROFILE HOOKS — call these inside your existing renderProfile function
+// after you have the userDoc and root container.
+//
+// Example usage (add inside renderProfile after building the basic profile):
+//   import { renderOrbitScoreBadge, renderTechStack, renderSkillBadges } from "./features.js";
+//   renderOrbitScoreBadge(nameRowEl, uid);
+//   renderTechStack(tabContentEl, userDoc, isMe);
+//   renderSkillBadges(tabContentEl, uid, isMe);
+// =========================================================================
 
-/* =============================================================
-   4. STREAK SHIELDS
-   ============================================================= */
-
-const Shields = {
-    cache: { shields: 0, shieldsLastEarned: null },
-    loaded: false,
-
-    async load() {
-        const me = state.user?.uid;
-        if (!me) return;
-        try {
-            const snap = await F.getDoc(F.doc(db, "users", me));
-            const data = snap.data() || {};
-            this.cache.shields = data.shields || 0;
-            this.cache.shieldsLastEarned = data.shieldsLastEarned || null;
-            this.loaded = true;
-            this.maybeEarn(data);
-            this.render();
-        } catch {}
-    },
-
-    async maybeEarn(profile) {
-        const streak = profile?.streak || state.profile?.streak || 0;
-        if (!streak || streak < 14) return;
-        const targetTier = Math.floor(streak / 14);
-        const lastTier = profile.shieldsTier || 0;
-        if (targetTier > lastTier) {
-            const me = state.user?.uid;
-            if (!me) return;
-            try {
-                await F.updateDoc(F.doc(db, "users", me), {
-                    shields: F.increment(targetTier - lastTier),
-                    shieldsTier: targetTier,
-                    shieldsLastEarned: todayKey()
-                });
-                this.cache.shields += (targetTier - lastTier);
-                showToast(`You earned a streak shield! (${this.cache.shields} total)`);
-                this.render();
-            } catch {}
-        }
-    },
-
-    render: rafOnce(function () {
-        const targets = document.querySelectorAll(
-            "[data-streak-pill], .streak-pill, .streak-display, #streak-count, .home-streak"
-        );
-        const count = Shields.cache.shields || 0;
-        document.querySelectorAll(".streak-shield-pill").forEach(p => p.remove());
-        if (count <= 0) return;
-        targets.forEach(el => {
-            const pill = document.createElement("span");
-            pill.className = "streak-shield-pill";
-            pill.title = `You have ${count} streak shield${count === 1 ? "" : "s"}. They auto-protect a missed day.`;
-            pill.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3z"/></svg><span class="ssp-count">×${count}</span>`;
-            el.appendChild(pill);
-        });
-    }),
-
-    init() {
-        // One-time load when auth is ready, then re-render on every route
-        // change (no setInterval). The 2-second poller in the previous
-        // version was creating constant DOM churn.
-        const tryLoad = () => {
-            if (!this.loaded && state.user?.uid) this.load();
-            else this.render();
-        };
-        tryLoad();
-        onHash(tryLoad);
-        // If the user logs in after boot, app.js will eventually populate
-        // state.user. Give it up to ~10s with light polling.
-        let attempts = 0;
-        const iv = setInterval(() => {
-            attempts++;
-            if (this.loaded || attempts > 10) { clearInterval(iv); return; }
-            if (state.user?.uid) { clearInterval(iv); this.load(); }
-        }, 1000);
-    }
-};
-
-
-/* =============================================================
-   5. MONTHLY "Year-in-Drops" RECAP
-   ============================================================= */
-
-const Recap = {
-    monthOffset: 0,
-
-    monthBounds(offset = 0) {
-        const now = new Date();
-        const start = new Date(now.getFullYear(), now.getMonth() + offset, 1);
-        const end = new Date(now.getFullYear(), now.getMonth() + offset + 1, 1);
-        return { start, end, label: start.toLocaleString(undefined, { month: "long", year: "numeric" }) };
-    },
-
-    async fetchMonth(offset = 0) {
-        const me = state.user?.uid;
-        if (!me) return { posts: [], totalLikes: 0 };
-        const { start, end } = this.monthBounds(offset);
-        const startKey = todayKey(start);
-        const endKey = todayKey(new Date(end.getTime() - 86400000));
-        try {
-            const q = F.query(
-                F.collection(db, "posts"),
-                F.where("uid", "==", me),
-                F.where("promptDate", ">=", startKey),
-                F.where("promptDate", "<=", endKey)
-            );
-            const snap = await F.getDocs(q);
-            const posts = [];
-            let totalLikes = 0;
-            snap.forEach(d => {
-                const data = d.data() || {};
-                posts.push({ id: d.id, ...data });
-                totalLikes += data.likes || 0;
-            });
-            return { posts, totalLikes };
-        } catch (e) {
-            return { posts: [], totalLikes: 0 };
-        }
-    },
-
-    async render() {
-        const stage = document.getElementById("recap-stage");
-        if (!stage) return;
-        stage.innerHTML = `<div class="recap-empty">Loading your drops…</div>`;
-        const { label } = this.monthBounds(this.monthOffset);
-        const titleEl = document.getElementById("recap-title");
-        if (titleEl) titleEl.textContent = `Your ${label}`;
-        const { posts, totalLikes } = await this.fetchMonth(this.monthOffset);
-        if (!posts.length) {
-            stage.innerHTML = `<div class="recap-empty">No drops in ${escapeHtml(label)}.</div>`;
-            return;
-        }
-        const sorted = posts.slice().sort((a, b) => {
-            const ta = a.createdAt?.toMillis?.() || 0;
-            const tb = b.createdAt?.toMillis?.() || 0;
-            return tb - ta;
-        });
-        const cells = [];
-        for (let i = 0; i < 9; i++) {
-            const p = sorted[i];
-            if (p) {
-                const url = p.imageUrl || (p.images && p.images[0]) || "";
-                cells.push(`<div class="rc-cell" style="background-image:url('${escapeHtml(url)}');"></div>`);
-            } else {
-                cells.push(`<div class="rc-cell"></div>`);
-            }
-        }
-        const card = `
-            <div class="recap-card" id="recap-card-render">
-                <div class="rc-header">
-                    <span class="rc-month">${escapeHtml(label)}</span>
-                    <span class="rc-brand">DROP</span>
-                </div>
-                <div class="rc-title">${posts.length} drop${posts.length === 1 ? "" : "s"} in your month</div>
-                <div class="rc-grid">${cells.join("")}</div>
-                <div class="rc-stats">
-                    <div class="rc-stat"><span class="rc-stat-num">${posts.length}</span><span class="rc-stat-label">drops</span></div>
-                    <div class="rc-stat"><span class="rc-stat-num">${totalLikes}</span><span class="rc-stat-label">likes</span></div>
-                    <div class="rc-stat"><span class="rc-stat-num">${posts.filter(p => p.isOnTime).length}</span><span class="rc-stat-label">on time</span></div>
-                </div>
-            </div>`;
-        stage.innerHTML = card;
-    },
-
-    async saveImage() {
-        const card = document.getElementById("recap-card-render");
-        if (!card || typeof window.html2canvas !== "function") {
-            showToast("Image rendering not available.", "error");
-            return;
-        }
-        try {
-            const canvas = await window.html2canvas(card, { useCORS: true, backgroundColor: null, scale: 2 });
-            const url = canvas.toDataURL("image/png");
-            const a = document.createElement("a");
-            const { label } = this.monthBounds(this.monthOffset);
-            a.download = `drop-recap-${label.replace(/\s+/g, "-").toLowerCase()}.png`;
-            a.href = url;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            showToast("Saved!");
-        } catch (e) {
-            console.error(e);
-            showToast("Couldn't save image.", "error");
-        }
-    },
-
-    injectTrigger() {
-        // Only do work if we're on a route where the trigger belongs.
-        const hash = currentHash();
-        if (!(hash.startsWith("#/profile") || hash === "#/settings")) return;
-        const candidates = document.querySelectorAll(
-            "#view-profile, #view-settings, .profile-content, .settings-content"
-        );
-        candidates.forEach(target => {
-            if (!target || target.querySelector(".recap-trigger")) return;
-            const btn = document.createElement("button");
-            btn.type = "button";
-            btn.className = "recap-trigger";
-            btn.innerHTML = `
-                <span class="rt-icon">★</span>
-                <span class="rt-meta">
-                    <span class="rt-title">Your month in drops</span>
-                    <span class="rt-sub">A shareable recap of this month</span>
-                </span>`;
-            btn.addEventListener("click", () => {
-                this.monthOffset = 0;
-                this.render();
-                openDialog("monthly-recap-dialog");
-            });
-            target.prepend(btn);
-        });
-    },
-
-    init() {
-        _on(document.getElementById("recap-save"), "click", () => this.saveImage());
-        _on(document.getElementById("recap-month-prev"), "click", () => { this.monthOffset--; this.render(); });
-        _on(document.getElementById("recap-month-next"), "click", () => { if (this.monthOffset < 0) { this.monthOffset++; this.render(); } });
-
-        // Drive trigger injection from hashchange — no body-wide observer.
-        onHash(() => this.injectTrigger());
-        this.injectTrigger();
-    }
-};
-
-
-/* =============================================================
-   BOOT
-   ============================================================= */
-
-ChatCustom.init();
-Songs.init();
-// Expose Songs on window so app.js handlePost can read pendingSong at post time.
-window.Songs = Songs;
-ReplyDrops.init();
-Shields.init();
-Recap.init();
-
-console.log("[features] loaded — chat themes, songs, reply drops, shields, recap");
+// =========================================================================
+// INIT — wire up new compose forms & nav on auth-ready
+// =========================================================================
+document.addEventListener("orbit:auth-ready", () => {
+  initBuildCompose();
+  initProjectCompose();
+});
