@@ -668,15 +668,44 @@ const renderPost = (p, author, opts = {}) => {
   post.appendChild(head);
 
   if (p.location?.city || p.location?.lat) { post.appendChild(el("div", { class: "post-location-badge" }, el("i", { class: "ri-map-pin-fill" }), " " + (p.location.city || p.location.lat + ", " + p.location.lng))); }
+
+  // Feature: kind badge + title for build/project posts
+  if (p.kind === "build" || p.kind === "project") {
+    const icons  = { build: "ri-hammer-line", project: "ri-folder-5-line" };
+    const labels = { build: "Build in Public",  project: "Project Showcase" };
+    post.appendChild(el("div", { class: `post-kind-badge post-kind-${p.kind}` },
+      el("i", { class: icons[p.kind] }), " " + labels[p.kind]));
+  }
+  if (p.title) {
+    post.appendChild(el("div", { class: "post-feat-title", onclick: () => location.hash = `#post/${p.id}` }, p.title));
+  }
+
   if (p.text) {
-    const body = el("div", { class: "post-text", onclick: () => location.hash = `#post/${p.id}` });
-    body.innerHTML = linkify(p.text);
-    post.appendChild(body);
+    if (p.text.includes("```")) {
+      const body = el("div", { class: "post-text-wrap", onclick: (e) => { if (!e.target.closest("button,a")) location.hash = `#post/${p.id}`; } });
+      import("./features.js").then((m) => body.appendChild(m.renderTextWithCode(p.text))).catch(() => {
+        body.innerHTML = linkify(p.text);
+      });
+      post.appendChild(body);
+    } else {
+      const body = el("div", { class: "post-text", onclick: () => location.hash = `#post/${p.id}` });
+      body.innerHTML = linkify(p.text);
+      post.appendChild(body);
+    }
   }
 
   // Media (single or carousel)
   const carousel = renderMediaCarousel(p.media);
   if (carousel) post.appendChild(carousel);
+
+  // Feature: extra detail block for build/project posts (stage, progress, tags, links)
+  if (p.kind === "build" || p.kind === "project") {
+    import("./features.js").then((m) => {
+      const extra = p.kind === "build" ? m.renderBuildExtra(p) : m.renderProjectExtra(p);
+      const actions = post.querySelector(".post-actions");
+      if (actions) post.insertBefore(extra, actions); else post.appendChild(extra);
+    }).catch(() => {});
+  }
 
   // Actions row
   const orbitIcon = el("i", { class: iOrbited ? "ri-fire-fill" : "ri-fire-line" });
@@ -1245,7 +1274,15 @@ const renderSaved = (root) => {
 // 12. PROFILE
 // =========================================================================
 const renderProfile = async (root, uid) => {
-  const u = await fetchUser(uid);
+  // Always use fresh data for own profile (bypass stale cache after Pro activation)
+  let u;
+  if (uid === state.uid) {
+    state.cache.users.delete(uid);
+    u = await fetchUser(uid);
+    if (u) state.me = { ...state.me, ...u };
+  } else {
+    u = await fetchUser(uid);
+  }
   if (!u) {
     root.appendChild(el("div", { class: "empty" }, el("i", { class: "ri-user-line" }), el("div", { class: "t" }, "User not found")));
     return;
@@ -1257,7 +1294,8 @@ const renderProfile = async (root, uid) => {
     el("img", { class: "avatar xl", src: avatarFor(u) }),
     el("div", {},
       el("div", { class: "name-row" }, u.name,
-        u.verified ? el("span", { class: "verified lg", title: "Location verified", html: '<i class="ri-check-line"></i>' }) : null),
+        u.verified ? el("span", { class: "verified lg", title: "Location verified", html: '<i class="ri-check-line"></i>' }) : null,
+        u.isPro ? el("span", { class: "pro-name-badge" }, el("i", { class: "ri-vip-crown-fill" }), " Pro") : null),
       el("div", { class: "uname" }, "@" + u.username),
       el("div", { class: "stats" },
         el("div", { class: "stat" }, el("strong", {}, String((u.followers || []).length)), el("span", {}, "followers")),
@@ -1288,6 +1326,20 @@ const renderProfile = async (root, uid) => {
       ),
     ),
   ));
+
+  // Feature: Pro section — rendered directly below header, always visible
+  const proSection = el("div", { class: "profile-pro-section" });
+  root.appendChild(proSection);
+  import("./features.js").then((m) => {
+    if (u.isPro) {
+      // Orbit Score goes at the TOP of proSection (not inside name-row)
+      m.renderOrbitScoreBadge(proSection, uid);
+      m.renderTechStack(proSection, u, isMe);
+      m.renderSkillBadges(proSection, uid, isMe);
+    } else if (isMe) {
+      m.renderGoProBanner(proSection);
+    }
+  }).catch(() => {});
 
   const tabs = el("div", { class: "profile-tabs" },
     el("button", { class: "profile-tab active", "data-ptab": "posts" }, "Posts"),
@@ -1445,6 +1497,29 @@ const renderSettings = (root) => {
     ),
 
     el("div", { class: "group" },
+      el("h3", {}, el("i", { class: "ri-vip-crown-line", style: "color:var(--grad-1);margin-right:6px;" }), "Orbit Pro"),
+      el("div", { class: "row" },
+        el("div", { class: "label" },
+          el("div", { class: "t" }, state.me.isPro ? "Pro activated ✦" : "Go Professional"),
+          el("div", { class: "d" }, state.me.isPro
+            ? "You have access to Orbit Score, Tech Stack, Skill Badges, Build in Public and Project Showcase."
+            : "Unlock developer features: Orbit Score, Tech Stack, Skill Badges, Build in Public & Project Showcase."),
+        ),
+        state.me.isPro
+          ? el("span", { class: "pro-active-badge" }, el("i", { class: "ri-vip-crown-fill" }), " Active")
+          : el("button", { class: "btn primary", onclick: async (e) => {
+              e.currentTarget.disabled = true;
+              e.currentTarget.textContent = "Activating…";
+              await updateDoc(doc(db, "users", state.uid), { isPro: true }).catch(() => {});
+              state.me.isPro = true;
+              state.cache.users.delete(state.uid);
+              toast("Welcome to Orbit Pro! ✦");
+              router();
+            }}, el("i", { class: "ri-vip-crown-line" }), " Activate Pro"),
+      ),
+    ),
+
+    el("div", { class: "group" },
       el("h3", {}, "Storage"),
       el("div", { class: "row" }, el("div", { class: "label" },
         el("div", { class: "t" }, "Cloudinary"),
@@ -1486,6 +1561,10 @@ const requestLocationVerification = () => {
 // =========================================================================
 const composeModal = $("#composeModal");
 const openCompose = (which = "post") => {
+  if ((which === "build" || which === "project") && !state.me?.isPro) {
+    import("./features.js").then((m) => m.showGoProModal()).catch(() => {});
+    return;
+  }
   composeModal.classList.remove("hidden");
   $$(".ct").forEach((b) => b.classList.toggle("active", b.dataset.ctab === which));
   $$(".compose-pane").forEach((p) => p.classList.toggle("hidden", !p.id.startsWith(which)));

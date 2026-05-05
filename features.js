@@ -80,13 +80,13 @@ export const renderTextWithCode = (text = "") => {
 // Shows a weighted reputation score on profiles.
 // Score = (post orbits × 3) + (comments × 1) + (followers × 5)
 // =========================================================================
-export const computeOrbitScore = async (uid) => {
+export const computeOrbitScore = async (uid, userData = null) => {
   try {
     const [postsSnap, userSnap] = await Promise.all([
       getDocs(query(collection(db, "posts"), where("authorUid", "==", uid), limit(50))),
-      getDoc(doc(db, "users", uid)),
+      userData ? Promise.resolve(null) : getDoc(doc(db, "users", uid)),
     ]);
-    const user = userSnap.data() || {};
+    const user = userData || userSnap?.data() || {};
     const followerCount = (user.followers || []).length;
     let orbitTotal = 0, commentTotal = 0;
     postsSnap.docs.forEach((d) => {
@@ -97,20 +97,32 @@ export const computeOrbitScore = async (uid) => {
   } catch { return 0; }
 };
 
-export const renderOrbitScoreBadge = async (container, uid) => {
-  const score = await computeOrbitScore(uid);
-  const tier  =
-    score >= 500 ? { label: "Legend",   color: "#ffd700", icon: "ri-vip-crown-fill" } :
-    score >= 200 ? { label: "Pro",      color: "var(--grad-1)", icon: "ri-star-fill" } :
-    score >= 80  ? { label: "Rising",   color: "var(--good)",   icon: "ri-rocket-fill" } :
-                   { label: "Newcomer", color: "var(--text-dim)", icon: "ri-seedling-fill" };
-
-  const badge = el("div", { class: "orbit-score-badge", title: `Orbit Score: ${score}` },
-    el("i", { class: tier.icon, style: `color:${tier.color};` }),
-    el("span", { class: "osb-score" }, String(score)),
-    el("span", { class: "osb-tier" }, tier.label),
-  );
+export const renderOrbitScoreBadge = (container, uid) => {
+  const badge = el("div", { class: "orbit-score-badge", title: "Orbit Score" });
   container.appendChild(badge);
+
+  const paint = (score) => {
+    const tier =
+      score >= 500 ? { label: "Legend",  color: "#ffd700",         icon: "ri-vip-crown-fill" } :
+      score >= 200 ? { label: "Pro",     color: "var(--grad-1)",   icon: "ri-star-fill" } :
+      score >= 80  ? { label: "Rising",  color: "var(--good)",     icon: "ri-rocket-fill" } :
+                     { label: "Newcomer",color: "var(--text-dim)", icon: "ri-seedling-fill" };
+    badge.innerHTML = "";
+    badge.title = `Orbit Score: ${score}`;
+    badge.appendChild(el("i", { class: tier.icon, style: `color:${tier.color}` }));
+    badge.appendChild(el("span", { class: "osb-score" }, String(score)));
+    badge.appendChild(el("span", { class: "osb-tier" }, tier.label));
+  };
+
+  const unsub = onSnapshot(doc(db, "users", uid), async (snap) => {
+    if (!snap.exists()) return;
+    const score = await computeOrbitScore(uid, snap.data());
+    paint(score);
+  });
+  const obs = new MutationObserver(() => {
+    if (!document.body.contains(badge)) { unsub(); obs.disconnect(); }
+  });
+  obs.observe(document.body, { childList: true, subtree: true });
 };
 
 // =========================================================================
@@ -709,21 +721,24 @@ const renderLeaderboard = async () => {
 // 7. SKILL BADGES — peer-verified skill tags on profiles
 // Stored in Firestore: users/{uid}/badges subcollection
 // =========================================================================
-export const renderSkillBadges = async (container, uid, isMe = false) => {
+export const renderSkillBadges = (container, uid, isMe = false) => {
   const wrap = el("div", { class: "skill-badges-section" });
-  wrap.appendChild(el("div", { class: "sb-head" },
+  const head = el("div", { class: "sb-head" },
     el("span", {}, el("i", { class: "ri-award-fill" }), " Skill Badges"),
     isMe ? el("button", { class: "btn ghost sm", onclick: () => openAddBadge(uid, wrap) },
       el("i", { class: "ri-add-line" }), "Add") : null,
-  ));
+  );
+  wrap.appendChild(head);
+  container.appendChild(wrap);
 
-  try {
-    const snap = await getDocs(collection(db, "users", uid, "badges"));
+  const grid = el("div", { class: "sb-grid" });
+
+  const unsub = onSnapshot(collection(db, "users", uid, "badges"), (snap) => {
+    grid.innerHTML = "";
     if (snap.empty) {
-      if (isMe) wrap.appendChild(el("div", { class: "sb-empty" }, "Add skills you want peers to verify."));
-      else wrap.appendChild(el("div", { class: "sb-empty" }, "No skill badges yet."));
+      grid.appendChild(el("div", { class: "sb-empty" },
+        isMe ? "Add skills you want peers to verify." : "No skill badges yet."));
     } else {
-      const grid = el("div", { class: "sb-grid" });
       snap.docs.forEach((d) => {
         const b = { id: d.id, ...d.data() };
         const endorsed = (b.endorsements || []).includes(state.uid);
@@ -735,26 +750,25 @@ export const renderSkillBadges = async (container, uid, isMe = false) => {
             await updateDoc(doc(db, "users", uid, "badges", b.id), {
               endorsements: endorsed ? arrayRemove(state.uid) : arrayUnion(state.uid),
             });
-            endorseBtn.classList.toggle("active", !endorsed);
-            endorseBtn.querySelector(".sb-endorse-count").textContent =
-              String((b.endorsements?.length || 0) + (endorsed ? -1 : 1));
           },
         }, el("i", { class: "ri-thumb-up-line" }), el("span", { class: "sb-endorse-count" }, String((b.endorsements || []).length))) : null;
 
-        const chip = el("div", { class: "sb-chip" },
+        grid.appendChild(el("div", { class: "sb-chip" },
           el("div", { class: "sb-chip-info" },
             el("span", { class: "sb-skill" }, b.name),
             el("span", { class: "sb-level" }, b.level || ""),
           ),
           endorseBtn,
-        );
-        grid.appendChild(chip);
+        ));
       });
-      wrap.appendChild(grid);
     }
-  } catch { wrap.appendChild(el("div", { class: "sb-empty" }, "Could not load badges")); }
+    if (!wrap.contains(grid)) wrap.appendChild(grid);
+  });
 
-  container.appendChild(wrap);
+  const obs = new MutationObserver(() => {
+    if (!document.body.contains(wrap)) { unsub(); obs.disconnect(); }
+  });
+  obs.observe(document.body, { childList: true, subtree: true });
 };
 
 const SKILL_LEVELS = ["Beginner", "Intermediate", "Advanced", "Expert"];
@@ -998,6 +1012,101 @@ export const renderConstellation = async (container) => {
     }, `#${tag}`);
     galaxy.appendChild(node);
   });
+};
+
+// =========================================================================
+// RENDER EXTRAS — injected into standard renderPost for build/project kinds
+// =========================================================================
+export const renderBuildExtra = (p) => {
+  const stageColors = { idea: "var(--grad-3)", prototype: "var(--warn)", beta: "var(--grad-1)", live: "var(--good)" };
+  const stageLabels = { idea: "Idea", prototype: "Prototype", beta: "Beta", live: "Live" };
+  const color = stageColors[p.buildStage] || "var(--primary)";
+  const prog  = Math.min(100, Math.max(0, p.buildProgress || 0));
+
+  return el("div", { class: "build-extra" },
+    el("span", { class: "build-stage-badge", style: `background:${color}` },
+      stageLabels[p.buildStage] || p.buildStage || "Update"),
+    el("div", { class: "build-progress-wrap" },
+      el("div", { class: "build-progress-label" },
+        el("span", {}, "Progress"),
+        el("strong", {}, prog + "%"),
+      ),
+      el("div", { class: "build-progress-track" },
+        el("div", { class: "build-progress-fill", style: `width:${prog}%;background:${color}` }),
+      ),
+    ),
+  );
+};
+
+export const renderProjectExtra = (p) => {
+  const wrap = el("div", { class: "project-extra" });
+  if (p.techTags?.length) {
+    wrap.appendChild(el("div", { class: "project-tags" },
+      ...p.techTags.map((t) => el("span", { class: "ts-tag" }, t))));
+  }
+  const links = el("div", { class: "project-links" });
+  if (p.githubUrl) links.appendChild(el("a", {
+    href: p.githubUrl, target: "_blank", rel: "noopener", class: "btn ghost sm",
+  }, el("i", { class: "ri-github-fill" }), " GitHub"));
+  if (p.liveUrl) links.appendChild(el("a", {
+    href: p.liveUrl, target: "_blank", rel: "noopener", class: "btn primary sm",
+  }, el("i", { class: "ri-external-link-line" }), " Live Demo"));
+  if (links.children.length) wrap.appendChild(links);
+  return wrap;
+};
+
+// =========================================================================
+// GO PRO — banner + modal for non-Pro users
+// =========================================================================
+export const renderGoProBanner = (container) => {
+  container.appendChild(el("div", { class: "gopro-banner" },
+    el("div", { class: "gopro-banner-icon" }, el("i", { class: "ri-vip-crown-fill" })),
+    el("div", { class: "gopro-banner-text" },
+      el("div", { class: "gopro-banner-title" }, "Unlock Orbit Pro"),
+      el("div", { class: "gopro-banner-desc" },
+        "Activate Pro in Settings to access Orbit Score, Tech Stack, Skill Badges, Build in Public and Project Showcase."),
+    ),
+    el("button", { class: "btn primary sm", onclick: () => { location.hash = "#settings"; } },
+      el("i", { class: "ri-vip-crown-line" }), " Go Pro"),
+  ));
+};
+
+export const showGoProModal = () => {
+  const overlay = el("div", { class: "ts-editor-overlay" });
+  const modal   = el("div", { class: "ts-editor-modal gopro-modal" });
+
+  modal.appendChild(el("div", { class: "ts-editor-head" },
+    el("div", { style: "display:flex;align-items:center;gap:10px;" },
+      el("i", { class: "ri-vip-crown-fill", style: "font-size:22px;color:var(--grad-1)" }),
+      el("h3", { style: "margin:0" }, "Orbit Pro Required"),
+    ),
+    el("button", { class: "icon-btn", onclick: () => overlay.remove() }, el("i", { class: "ri-close-line" })),
+  ));
+
+  const features = [
+    "Orbit Score — live reputation badge",
+    "Tech Stack Profile — showcase your tools",
+    "Skill Badges — peer-verified skills",
+    "Build in Public posts — share your progress",
+    "Project Showcase posts — present your work",
+  ];
+  modal.appendChild(el("div", { class: "gopro-modal-body" },
+    el("p", { style: "color:var(--text-dim);margin:0 0 14px;" },
+      "This feature is only available after activating Orbit Pro. It's free — just one tap in Settings."),
+    el("div", { class: "gopro-features" },
+      ...features.map((f) => el("div", { class: "gopro-feature-row" },
+        el("i", { class: "ri-check-line", style: "color:var(--good);flex-shrink:0;" }), " " + f)),
+    ),
+  ));
+
+  modal.appendChild(el("button", { class: "btn primary ts-save-btn", onclick: () => {
+    overlay.remove();
+    location.hash = "#settings";
+  }}, el("i", { class: "ri-vip-crown-line" }), " Activate Pro in Settings — it's free"));
+
+  overlay.appendChild(modal);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
 };
 
 // =========================================================================
