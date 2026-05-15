@@ -337,50 +337,29 @@ function updateZoneBadge(count){
 // ══════════════════════════════════════════════════
 //  CSS HYBRID MAP  (no rAF loop — GPU animations)
 // ══════════════════════════════════════════════════
+// ── SOCIAL PROXIMITY VIEW (no canvas, no lag) ─────
 function initCSSMap(){
-  drawStaticBackground();
-  window.addEventListener("resize",()=>{drawStaticBackground();updateZoneRingSize();syncOrbElements();});
-  // Set self orb initial
-  const initEl=document.getElementById("self-orb-initial");
-  if(initEl&&state.user?.displayName) initEl.textContent=nameInitial(state.user.displayName);
+  updateSelfOrb();
+  window.addEventListener("resize",()=>{updateZoneRingSize();syncOrbElements();});
 }
 
-function drawStaticBackground(){
-  const canvas=document.getElementById("map-canvas-bg"); if(!canvas)return;
-  const wrap=canvas.parentElement;
-  const dpr=window.devicePixelRatio||1;
-  const W=wrap.offsetWidth, H=wrap.offsetHeight;
-  canvas.width=W*dpr; canvas.height=H*dpr;
-  canvas.style.width=W+"px"; canvas.style.height=H+"px";
-  const ctx=canvas.getContext("2d");
-  ctx.scale(dpr,dpr);
-
-  // Deep dark radial gradient
-  const bg=ctx.createRadialGradient(W/2,H/2,0,W/2,H/2,Math.max(W,H)*.75);
-  bg.addColorStop(0,"#0f0c1e"); bg.addColorStop(.5,"#09091a"); bg.addColorStop(1,"#050510");
-  ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
-
-  // Subtle grid
-  const gs=60; ctx.strokeStyle="rgba(255,255,255,0.025)"; ctx.lineWidth=1;
-  for(let x=0;x<W;x+=gs){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
-  for(let y=0;y<H;y+=gs){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
-
-  // Compass rose (faint)
-  const cx=W/2, cy=H/2, cr=18;
-  const dirs=[{a:0,l:"N"},{a:90,l:"E"},{a:180,l:"S"},{a:270,l:"W"}];
-  dirs.forEach(({a,l})=>{
-    const r=a*Math.PI/180, d=Math.min(W,H)*.4;
-    const tx=cx+Math.sin(r)*d, ty=cy-Math.cos(r)*d;
-    ctx.fillStyle="rgba(255,255,255,0.06)"; ctx.font="10px Inter,sans-serif";
-    ctx.textAlign="center"; ctx.textBaseline="middle";
-    ctx.fillText(l,tx,ty);
-  });
+function updateSelfOrb(){
+  const initial=document.getElementById("self-orb-initial");
+  const photo=document.getElementById("self-orb-photo");
+  const name=state.user?.displayName||state.authUser?.displayName||"?";
+  if(initial) initial.textContent=nameInitial(name);
+  if(photo&&state.user?.photoURL){
+    photo.style.backgroundImage=`url(${state.user.photoURL})`;
+    photo.style.backgroundSize="cover";
+    photo.style.borderRadius="50%";
+    if(initial) initial.style.display="none";
+  }
 }
 
 function getMapMetrics(){
   const wrap=document.getElementById("map-wrap"); if(!wrap)return null;
   const W=wrap.offsetWidth, H=wrap.offsetHeight;
-  const ppm=(Math.min(W,H)*0.28/state.zoneRadius)*state.mapZoom;
+  const ppm=(Math.min(W,H)*0.32/state.zoneRadius)*state.mapZoom;
   return{W,H,ppm};
 }
 
@@ -390,56 +369,90 @@ function updateZoneRingSize(){
   const size=state.zoneRadius*m.ppm*2;
   ring.style.width=size+"px"; ring.style.height=size+"px";
   ring.style.transform=`translate(calc(-50% + ${state.mapPan.x}px), calc(-50% + ${state.mapPan.y}px))`;
-}
-
-function syncOrbElements(){
-  const layer=document.getElementById("map-orb-layer"); if(!layer)return;
-  const m=getMapMetrics(); if(!m)return;
   const selfEl=document.getElementById("map-self-orb");
   if(selfEl) selfEl.style.transform=`translate(calc(-50% + ${state.mapPan.x}px), calc(-50% + ${state.mapPan.y}px))`;
+}
 
-  // Remove stale orbs
+// Throttle: only update orb positions every 15 seconds max
+let lastOrbPositionSync=0;
+function syncOrbElements(forcePositions=false){
+  const layer=document.getElementById("map-orb-layer"); if(!layer)return;
+  const now=Date.now();
+  const shouldUpdatePositions=forcePositions||(now-lastOrbPositionSync>15000);
+
+  // Always sync presence (create / remove orbs)
   const currentUids=new Set(state.nearbyUsers.map(u=>u.uid));
-  layer.querySelectorAll(".map-orb").forEach(el=>{
-    if(!currentUids.has(el.dataset.uid)) el.remove();
-  });
-
-  state.nearbyUsers.forEach(user=>{
-    if(!user.location||!state.coords)return;
-    const angle=bearingTo(state.coords.lat,state.coords.lng,user.location.latitude,user.location.longitude);
-    const rad=angle*Math.PI/180;
-    const px=Math.sin(rad)*user.distance*m.ppm+state.mapPan.x;
-    const py=-Math.cos(rad)*user.distance*m.ppm+state.mapPan.y;
-    const color=orbColor(user.mood);
-
-    let orb=document.getElementById(`orb-${user.uid}`);
-    if(!orb){
-      orb=createOrbElement(user,layer);
+  layer.querySelectorAll(".social-orb").forEach(el=>{
+    if(!currentUids.has(el.dataset.uid)){
+      el.style.opacity="0"; el.style.transform+=" scale(0.5)";
+      setTimeout(()=>el.remove(), 400);
     }
-    // Update color
-    orb.style.setProperty("--oc",color);
-    orb.querySelector(".map-orb-label").textContent=user.displayName;
-    orb.querySelector(".map-orb-dist").textContent=`${user.distance}m`;
-    // Smooth position update via CSS transition
-    orb.style.transform=`translate(calc(-50% + ${px}px), calc(-50% + ${py}px))`;
   });
+
+  if(shouldUpdatePositions){
+    lastOrbPositionSync=now;
+    const m=getMapMetrics(); if(!m)return;
+    updateZoneRingSize();
+
+    state.nearbyUsers.forEach(user=>{
+      if(!user.location||!state.coords)return;
+      const angle=bearingTo(state.coords.lat,state.coords.lng,user.location.latitude,user.location.longitude);
+      const rad=angle*Math.PI/180;
+      const px=Math.sin(rad)*user.distance*m.ppm+state.mapPan.x;
+      const py=-Math.cos(rad)*user.distance*m.ppm+state.mapPan.y;
+
+      let orb=document.getElementById(`orb-${user.uid}`);
+      if(!orb){
+        orb=createOrbElement(user,layer);
+        // Animate in
+        orb.style.opacity="0"; orb.style.transform=`translate(calc(-50% + ${px}px), calc(-50% + ${py}px)) scale(0.5)`;
+        requestAnimationFrame(()=>{
+          orb.style.transition="transform 2s cubic-bezier(0.25,0.46,0.45,0.94), opacity 0.4s ease";
+          orb.style.opacity="1"; orb.style.transform=`translate(calc(-50% + ${px}px), calc(-50% + ${py}px))`;
+        });
+      } else {
+        orb.style.transform=`translate(calc(-50% + ${px}px), calc(-50% + ${py}px))`;
+        // Update live data
+        orb.style.setProperty("--oc",orbColor(user.mood));
+        const nameEl=orb.querySelector(".social-orb-name");
+        const pillEl=orb.querySelector(".social-orb-pill");
+        if(nameEl) nameEl.textContent=user.displayName;
+        if(pillEl) pillEl.textContent=`${user.distance}m · ${user.mood||"drifting"}`;
+      }
+    });
+  }
 }
 
 function createOrbElement(user,layer){
   const color=orbColor(user.mood);
+  const delay=(Math.random()*3).toFixed(2);
+  const dur=(3+Math.random()*2).toFixed(2);
+
   const orb=document.createElement("div");
-  orb.className="map-orb";
+  orb.className="social-orb";
   orb.id=`orb-${user.uid}`;
   orb.dataset.uid=user.uid;
   orb.style.setProperty("--oc",color);
+  orb.style.setProperty("--fdelay",delay+"s");
+  orb.style.setProperty("--fdur",dur+"s");
+  orb.style.transition="transform 2s cubic-bezier(0.25,0.46,0.45,0.94), opacity 0.4s ease";
+
+  const photoHTML=user.photoURL
+    ?`<img class="social-orb-photo" src="${user.photoURL}" alt="" />`
+    :``;
+
   orb.innerHTML=`
-    <div class="map-orb-glow"></div>
-    <div class="map-orb-ring"></div>
-    <div class="map-orb-dot">${nameInitial(user.displayName)}</div>
-    <div class="map-orb-info">
-      <span class="map-orb-label">${user.displayName}</span>
-      <span class="map-orb-dist">${user.distance}m</span>
+    <div class="social-orb-float">
+      <div class="social-orb-pulse-ring"></div>
+      <div class="social-orb-avatar-wrap">
+        ${photoHTML}
+        ${!user.photoURL?nameInitial(user.displayName):""}
+        <div class="social-orb-online"></div>
+      </div>
+      <span class="social-orb-name">${user.displayName}</span>
+      <span class="social-orb-pill">${user.distance}m · ${user.mood||"drifting"}</span>
     </div>`;
+
   orb.addEventListener("click",()=>openProfileCard(user));
   layer.appendChild(orb);
   return orb;
@@ -886,13 +899,12 @@ function loadPosts(){
 
 function renderCurrentPost(){
   const stack=document.getElementById("posts-stack"); if(!stack)return;
-  // Remove existing cards
-  stack.querySelectorAll(".post-card").forEach(c=>c.remove());
+  stack.querySelectorAll(".post-tiktok").forEach(c=>c.remove());
 
   const emptyEl=document.getElementById("posts-empty");
   const actionsEl=document.getElementById("posts-actions");
-
   const remaining=state.postQueue.slice(state.currentPostIndex);
+
   if(!remaining.length){
     emptyEl?.classList.remove("hidden");
     if(actionsEl)actionsEl.style.visibility="hidden";
@@ -901,75 +913,100 @@ function renderCurrentPost(){
   emptyEl?.classList.add("hidden");
   if(actionsEl)actionsEl.style.visibility="visible";
 
-  // Render up to 3 cards (stacked behind)
-  remaining.slice(0,3).reverse().forEach((post,i,arr)=>{
-    const isTop=i===arr.length-1;
-    const card=buildPostCard(post,isTop);
-    if(!isTop){
-      card.style.transform=`translateY(${(arr.length-1-i)*8}px) scale(${1-(arr.length-1-i)*0.03})`;
-      card.style.zIndex=i;
-      card.style.opacity=String(0.6+i*0.2);
-    }else{
-      card.style.zIndex="10";
-      attachSwipeListeners(card,post);
-    }
-    stack.insertBefore(card,stack.querySelector(".swipe-label"));
-  });
+  // Only render the top card (full-screen, TikTok style)
+  const post=remaining[0];
+  const card=buildPostCard(post);
+  card.style.zIndex="10";
+  attachSwipeListeners(card,post);
+  stack.insertBefore(card,stack.querySelector(".swipe-label"));
 }
 
-function buildPostCard(post,isTop){
+function buildPostCard(post){
   const color=orbColor(post.mood);
-  const moodLabels={open:"Open",chill:"Chill",lost:"Lost",bored:"Bored",curious:"Curious",observe:"Observing"};
+  const moodGradients={
+    open:   {hi:"rgba(249,115,22,0.55)",  lo:"rgba(239,68,68,0.25)"},
+    chill:  {hi:"rgba(6,182,212,0.55)",   lo:"rgba(59,130,246,0.25)"},
+    lost:   {hi:"rgba(168,85,247,0.55)",  lo:"rgba(139,92,246,0.25)"},
+    bored:  {hi:"rgba(234,179,8,0.55)",   lo:"rgba(249,115,22,0.2)"},
+    curious:{hi:"rgba(34,197,94,0.55)",   lo:"rgba(6,182,212,0.2)"},
+    observe:{hi:"rgba(100,116,139,0.4)",  lo:"rgba(71,85,105,0.2)"},
+  };
+  const grad=moodGradients[post.mood]||{hi:"rgba(139,92,246,0.5)",lo:"rgba(6,182,212,0.2)"};
+
   const card=document.createElement("div");
-  card.className="post-card";
+  card.className="post-tiktok";
   card.dataset.postId=post.id;
-  // Build media block
-  let mediaBlock="";
-  if(post.mediaURL){
-    if(post.mediaType==="video"){
-      mediaBlock=`<div class="post-card-media">
-        <video class="post-card-video" src="${post.mediaURL}" playsinline loop muted autoplay></video>
-        <div class="post-card-video-badge">
-          <svg viewBox="0 0 24 24" fill="currentColor" style="width:12px;height:12px"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          Video
-        </div>
-      </div>`;
-    }else{
-      mediaBlock=`<div class="post-card-media">
-        <img class="post-card-img" src="${post.mediaURL}" alt="Post image" loading="lazy" />
-      </div>`;
-    }
+
+  // Background
+  let bgHTML="";
+  if(post.mediaURL&&post.mediaType==="video"){
+    bgHTML=`<div class="ptk-bg"><video class="ptk-bg-video" src="${post.mediaURL}" playsinline loop muted autoplay></video></div>`;
+  }else if(post.mediaURL){
+    bgHTML=`<div class="ptk-bg"><img class="ptk-bg-img" src="${post.mediaURL}" alt="" loading="lazy" /></div>`;
+  }else{
+    bgHTML=`<div class="ptk-bg"><div class="ptk-bg-gradient" style="--gc-hi:${grad.hi};--gc-lo:${grad.lo}"></div></div>`;
   }
 
+  // Like count
+  const likes=post.likes||0;
+  const photoHTML=post.photoURL?`<img src="${post.photoURL}" alt="" />`:"";
+
   card.innerHTML=`
-    <div class="post-card-inner${post.mediaURL?" has-media":""}">
-      <div class="post-card-header">
-        <div class="post-card-avatar" style="background:${color}">${nameInitial(post.displayName)}</div>
-        <div class="post-card-user-info">
-          <span class="post-card-name">${post.displayName}</span>
-          <span class="post-card-meta">
-            <span class="post-card-dist">${post.distance}m away</span>
-            ${post.mood?`<span class="post-card-mood-dot" style="background:${color}"></span><span class="post-card-mood">${moodLabels[post.mood]||post.mood}</span>`:""}
-          </span>
+    ${bgHTML}
+    <div class="ptk-scrim-top"></div>
+    <div class="ptk-scrim"></div>
+    <div class="ptk-content">
+      <div class="ptk-left">
+        <div class="ptk-user-row">
+          <div class="ptk-avatar" style="background:${color};color:#fff">${photoHTML}${!post.photoURL?nameInitial(post.displayName):""}</div>
+          <div class="ptk-user-info">
+            <div class="ptk-username">${post.displayName}</div>
+            <div class="ptk-meta">${post.distance}m away · ${formatRelativeTime(post.createdAt)}</div>
+          </div>
+          <button class="ptk-wave-btn" data-uid="${post.uid}">+ wave</button>
         </div>
-        <span class="post-card-time">${formatRelativeTime(post.createdAt)}</span>
-      </div>
-      ${mediaBlock}
-      <div class="post-card-body${post.mediaURL?" compact":""}">
-        ${post.text?`<p class="post-card-text">${escapeHtml(post.text)}</p>`:""}
-      </div>
-      <div class="post-card-footer">
-        <div class="post-card-stat">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
-          <span>${post.likes||0}</span>
+        ${post.text?`<p class="ptk-caption">${escapeHtml(post.text)}</p>`:""}
+        <div class="ptk-zone-chip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="10" r="3"/><path d="M12 2C8.1 2 5 5.1 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.9-3.1-7-7-7z"/></svg>
+          within 500m
         </div>
-        <div class="post-swipe-hint">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 8l-4 4 4 4"/></svg>
-          <span>swipe to react</span>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 8l4 4-4 4"/></svg>
+      </div>
+      <div class="ptk-rail">
+        <div class="ptk-action like-action" id="ptk-like-${post.id}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+          <span>${likes}</span>
+        </div>
+        <div class="ptk-action msg-action" data-uid="${post.uid}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <span>DM</span>
+        </div>
+        <div class="ptk-action skip-action">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          <span>skip</span>
         </div>
       </div>
     </div>`;
+
+  // Rail action listeners
+  card.querySelector(".like-action").addEventListener("click",e=>{
+    e.stopPropagation();
+    swipePost("like");
+  });
+  card.querySelector(".msg-action").addEventListener("click",e=>{
+    e.stopPropagation();
+    const user={uid:post.uid,displayName:post.displayName,mood:post.mood,distance:post.distance||0};
+    openThread(user);
+  });
+  card.querySelector(".skip-action").addEventListener("click",e=>{
+    e.stopPropagation();
+    swipePost("skip");
+  });
+  card.querySelector(".ptk-wave-btn")?.addEventListener("click",e=>{
+    e.stopPropagation();
+    const user={uid:post.uid,displayName:post.displayName,mood:post.mood,distance:post.distance||0};
+    openThread(user);
+  });
+
   return card;
 }
 
@@ -1011,7 +1048,7 @@ function attachSwipeListeners(card,post){
 
 function swipePost(direction,cardEl){
   const post=state.postQueue[state.currentPostIndex]; if(!post)return;
-  const card=cardEl||document.querySelector(".post-card[style*='z-index: 10'], .post-card");
+  const card=cardEl||document.querySelector(".post-tiktok");
   if(!card)return;
 
   // Animate card off screen
@@ -1294,10 +1331,22 @@ function renderProfile(){
 
 // ── SETTINGS ──────────────────────────────────────
 function initSettings(){
+  // Theme toggle — persisted in localStorage
+  const themeToggle=document.getElementById("setting-light-theme");
+  if(themeToggle){
+    const saved=localStorage.getItem("drift_light_theme")==="1";
+    themeToggle.checked=saved;
+    if(saved) document.body.classList.add("light-theme");
+    themeToggle.addEventListener("change",function(){
+      document.body.classList.toggle("light-theme",this.checked);
+      localStorage.setItem("drift_light_theme",this.checked?"1":"0");
+      showToast(this.checked?"Light theme on ☀️":"Dark theme on 🌙","info");
+    });
+  }
   document.getElementById("setting-visible")?.addEventListener("change",function(){
     if(!state.uid)return;
     db.collection("users").doc(state.uid).update({isVisible:this.checked}).catch(()=>{});
-    showToast(this.checked?"You are visible on the map":"You are hidden from the map","info");
+    showToast(this.checked?"Visible on map":"Hidden from map","info");
   });
   document.getElementById("setting-trail")?.addEventListener("change",function(){
     if(!state.uid)return; db.collection("users").doc(state.uid).update({showTrail:this.checked}).catch(()=>{});
@@ -1305,7 +1354,7 @@ function initSettings(){
   document.getElementById("setting-radius")?.addEventListener("change",function(){
     state.zoneRadius=parseInt(this.value);
     document.getElementById("radius-label").textContent=`${this.value} meters`;
-    loadNearbyUsers(); updateZoneRingSize(); syncOrbElements();
+    loadNearbyUsers(); updateZoneRingSize(); syncOrbElements(true);
   });
   document.getElementById("btn-change-pw")?.addEventListener("click",async()=>{
     if(!state.authUser?.email)return;
@@ -1320,6 +1369,9 @@ function initSettings(){
 }
 
 // ── BOOT ──────────────────────────────────────────
+// Apply saved theme before first paint
+if(localStorage.getItem("drift_light_theme")==="1") document.body.classList.add("light-theme");
+
 window.addEventListener("load",()=>{
   setTimeout(()=>{showScreen("auth-screen");initAuth();initAuthCanvas();},2400);
 });
