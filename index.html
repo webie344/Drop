@@ -8,525 +8,506 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Drift</title>
   <link rel="stylesheet" href="styles.css" />
-
-  <!-- Firebase v9 Compat -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-
-  <!-- Cloudinary Upload Widget -->
   <script src="https://upload-widget.cloudinary.com/global/all.js" type="text/javascript"></script>
-
-  <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
 </head>
 <body>
 
-  <!-- ═══════════════════════════════════════ -->
-  <!--  SPLASH SCREEN                          -->
-  <!-- ═══════════════════════════════════════ -->
-  <div id="splash-screen" class="screen active">
-    <div class="splash-bg"></div>
-    <div class="splash-content">
-      <div class="splash-logo">
-        <div class="logo-orb">
-          <div class="logo-orb-inner"></div>
-          <div class="logo-pulse"></div>
-          <div class="logo-pulse delay-1"></div>
+<!-- ══════════════════════════════════════════
+     SPLASH
+══════════════════════════════════════════ -->
+<div id="splash-screen" class="screen active">
+  <div class="splash-bg"></div>
+  <div class="splash-content">
+    <div class="splash-logo">
+      <div class="logo-orb">
+        <div class="logo-orb-inner"></div>
+        <div class="logo-pulse"></div>
+        <div class="logo-pulse delay-1"></div>
+      </div>
+      <h1 class="logo-text">drift</h1>
+      <p class="logo-tagline">someone near you is on drift right now</p>
+    </div>
+    <div class="splash-loader">
+      <div class="loader-bar"><div class="loader-fill"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     AUTH
+══════════════════════════════════════════ -->
+<div id="auth-screen" class="screen">
+  <div class="auth-bg"><canvas id="auth-canvas"></canvas></div>
+  <div class="auth-container">
+    <div class="auth-logo">
+      <div class="auth-logo-orb"></div>
+      <span>drift</span>
+    </div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-tab="login">Sign In</button>
+      <button class="auth-tab" data-tab="register">Create Account</button>
+    </div>
+    <div id="auth-login" class="auth-form active">
+      <div class="input-group">
+        <span class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></span>
+        <input type="email" id="login-email" placeholder="Email address" autocomplete="email" />
+      </div>
+      <div class="input-group">
+        <span class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+        <input type="password" id="login-password" placeholder="Password" autocomplete="current-password" />
+        <button class="input-toggle-pw" onclick="togglePw('login-password')" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+      <button class="btn-primary" id="btn-login">Sign In</button>
+      <div class="auth-divider"><span>or</span></div>
+      <button class="btn-google" id="btn-google-login">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        Continue with Google
+      </button>
+      <p class="auth-error" id="login-error"></p>
+    </div>
+    <div id="auth-register" class="auth-form">
+      <div class="input-group">
+        <span class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+        <input type="text" id="reg-name" placeholder="Display name" maxlength="24" />
+      </div>
+      <div class="input-group">
+        <span class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></span>
+        <input type="email" id="reg-email" placeholder="Email address" autocomplete="email" />
+      </div>
+      <div class="input-group">
+        <span class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+        <input type="password" id="reg-password" placeholder="Password (min 6 chars)" autocomplete="new-password" />
+        <button class="input-toggle-pw" onclick="togglePw('reg-password')" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+      <button class="btn-primary" id="btn-register">Create Account</button>
+      <div class="auth-divider"><span>or</span></div>
+      <button class="btn-google" id="btn-google-register">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        Continue with Google
+      </button>
+      <p class="auth-error" id="register-error"></p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     MAIN APP
+══════════════════════════════════════════ -->
+<div id="app-screen" class="screen">
+
+  <!-- ── MAP VIEW ── -->
+  <div id="view-map" class="view active">
+    <div class="map-header">
+      <div class="map-header-left">
+        <div class="header-logo">drift</div>
+        <div class="zone-badge" id="zone-badge">
+          <span class="zone-dot"></span>
+          <span id="zone-count">0 nearby</span>
         </div>
-        <h1 class="logo-text">drift</h1>
-        <p class="logo-tagline">someone near you is on drift right now</p>
       </div>
-      <div class="splash-loader">
-        <div class="loader-bar"><div class="loader-fill"></div></div>
+      <div class="map-header-right">
+        <button class="icon-btn" id="btn-anchor" title="Anchor mode">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-mood" title="Set mood">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-crowd" title="Crowd mode">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        </button>
       </div>
+    </div>
+
+    <!-- CSS Hybrid Map -->
+    <div class="map-wrap" id="map-wrap">
+      <!-- Static background canvas (drawn once) -->
+      <canvas id="map-canvas-bg"></canvas>
+
+      <!-- Zone ring — sized via CSS custom property -->
+      <div class="map-zone-ring" id="map-zone-ring">
+        <div class="map-zone-pulse mzp1"></div>
+        <div class="map-zone-pulse mzp2"></div>
+        <div class="map-zone-pulse mzp3"></div>
+      </div>
+
+      <!-- CSS orbs layer — users positioned here -->
+      <div class="map-orb-layer" id="map-orb-layer"></div>
+
+      <!-- Self orb — always centered, pure CSS -->
+      <div class="map-self-orb" id="map-self-orb">
+        <div class="self-ring sr1"></div>
+        <div class="self-ring sr2"></div>
+        <div class="self-inner" id="self-orb-initial">?</div>
+      </div>
+
+      <div class="location-label" id="location-label">Locating you...</div>
+
+      <div class="zoom-controls">
+        <button class="zoom-btn" id="zoom-in" aria-label="Zoom in">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <button class="zoom-btn" id="zoom-out" aria-label="Zoom out">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Nearby strip -->
+    <div class="nearby-strip" id="nearby-strip">
+      <div class="nearby-strip-inner" id="nearby-strip-inner"></div>
+    </div>
+
+    <!-- Mood picker -->
+    <div class="mood-picker hidden" id="mood-picker">
+      <p class="mood-title">Set your vibe</p>
+      <div class="mood-grid">
+        <button class="mood-btn" data-mood="open"    style="--mc:#f97316"><svg class="mood-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>Open</button>
+        <button class="mood-btn" data-mood="chill"   style="--mc:#06b6d4"><svg class="mood-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>Chill</button>
+        <button class="mood-btn" data-mood="lost"    style="--mc:#a855f7"><svg class="mood-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Lost</button>
+        <button class="mood-btn" data-mood="bored"   style="--mc:#eab308"><svg class="mood-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><line x1="8" y1="15" x2="16" y2="15"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>Bored</button>
+        <button class="mood-btn" data-mood="curious" style="--mc:#22c55e"><svg class="mood-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Curious</button>
+        <button class="mood-btn" data-mood="observe" style="--mc:#64748b"><svg class="mood-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>Observe</button>
+      </div>
+      <button class="mood-clear" id="mood-clear">Clear mood</button>
     </div>
   </div>
 
-  <!-- ═══════════════════════════════════════ -->
-  <!--  AUTH SCREEN                            -->
-  <!-- ═══════════════════════════════════════ -->
-  <div id="auth-screen" class="screen">
-    <div class="auth-bg">
-      <canvas id="auth-canvas"></canvas>
+  <!-- ── POSTS VIEW ── -->
+  <div id="view-posts" class="view">
+    <div class="posts-header">
+      <h2>Posts</h2>
+      <button class="icon-btn" id="btn-create-post" title="Create post">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
     </div>
-    <div class="auth-container">
-      <div class="auth-logo">
-        <div class="auth-logo-orb"></div>
-        <span>drift</span>
-      </div>
 
-      <!-- Tabs -->
-      <div class="auth-tabs">
-        <button class="auth-tab active" data-tab="login">Sign In</button>
-        <button class="auth-tab" data-tab="register">Create Account</button>
+    <!-- Swipe card stack -->
+    <div class="posts-stack" id="posts-stack">
+      <!-- Swipe overlays -->
+      <div class="swipe-label swipe-like" id="swipe-like-label">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+        Like
       </div>
+      <div class="swipe-label swipe-skip" id="swipe-skip-label">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        Skip
+      </div>
+      <div class="posts-empty hidden" id="posts-empty">
+        <div class="empty-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </div>
+        <p>All caught up</p>
+        <span>No more posts in your zone right now</span>
+      </div>
+    </div>
 
-      <!-- Login Form -->
-      <div id="auth-login" class="auth-form active">
-        <div class="input-group">
-          <span class="input-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
-          </span>
-          <input type="email" id="login-email" placeholder="Email address" autocomplete="email" />
-        </div>
-        <div class="input-group">
-          <span class="input-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          </span>
-          <input type="password" id="login-password" placeholder="Password" autocomplete="current-password" />
-          <button class="input-toggle-pw" onclick="togglePw('login-password')" type="button" aria-label="Toggle password">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
-        </div>
-        <button class="btn-primary" id="btn-login">Sign In</button>
-        <div class="auth-divider"><span>or</span></div>
-        <button class="btn-google" id="btn-google-login">
-          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-          Continue with Google
-        </button>
-        <p class="auth-error" id="login-error"></p>
-      </div>
-
-      <!-- Register Form -->
-      <div id="auth-register" class="auth-form">
-        <div class="input-group">
-          <span class="input-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          </span>
-          <input type="text" id="reg-name" placeholder="Display name" maxlength="24" />
-        </div>
-        <div class="input-group">
-          <span class="input-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
-          </span>
-          <input type="email" id="reg-email" placeholder="Email address" autocomplete="email" />
-        </div>
-        <div class="input-group">
-          <span class="input-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          </span>
-          <input type="password" id="reg-password" placeholder="Password (min 6 chars)" autocomplete="new-password" />
-          <button class="input-toggle-pw" onclick="togglePw('reg-password')" type="button" aria-label="Toggle password">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
-        </div>
-        <button class="btn-primary" id="btn-register">Create Account</button>
-        <div class="auth-divider"><span>or</span></div>
-        <button class="btn-google" id="btn-google-register">
-          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-          Continue with Google
-        </button>
-        <p class="auth-error" id="register-error"></p>
-      </div>
+    <!-- Swipe action buttons (alternative to touch) -->
+    <div class="posts-actions" id="posts-actions">
+      <button class="post-action-btn skip-btn" id="btn-post-skip" aria-label="Skip post">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+      <button class="post-action-btn msg-btn" id="btn-post-msg" aria-label="Message poster">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      </button>
+      <button class="post-action-btn like-btn" id="btn-post-like" aria-label="Like post">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+      </button>
     </div>
   </div>
 
-  <!-- ═══════════════════════════════════════ -->
-  <!--  MAIN APP                               -->
-  <!-- ═══════════════════════════════════════ -->
-  <div id="app-screen" class="screen">
-
-    <!-- ─── MAP VIEW ─── -->
-    <div id="view-map" class="view active">
-      <div class="map-header">
-        <div class="map-header-left">
-          <div class="header-logo">drift</div>
-          <div class="zone-badge" id="zone-badge">
-            <span class="zone-dot"></span>
-            <span id="zone-count">0 nearby</span>
-          </div>
-        </div>
-        <div class="map-header-right">
-          <!-- Anchor -->
-          <button class="icon-btn" id="btn-anchor" title="Anchor mode">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg>
-          </button>
-          <!-- Mood -->
-          <button class="icon-btn" id="btn-mood" title="Set mood">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-          </button>
-          <!-- Crowd -->
-          <button class="icon-btn" id="btn-crowd" title="Crowd mode">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          </button>
-        </div>
-      </div>
-
-      <!-- Radar Map Canvas -->
-      <div class="map-wrap">
-        <canvas id="map-canvas"></canvas>
-        <div class="map-crosshair"></div>
-        <div class="location-label" id="location-label">Locating you...</div>
-        <div class="zoom-controls">
-          <button class="zoom-btn" id="zoom-in" aria-label="Zoom in">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          </button>
-          <button class="zoom-btn" id="zoom-out" aria-label="Zoom out">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          </button>
-        </div>
-      </div>
-
-      <!-- Nearby orb list peek -->
-      <div class="nearby-strip" id="nearby-strip">
-        <div class="nearby-strip-inner" id="nearby-strip-inner"></div>
-      </div>
-
-      <!-- Mood Picker -->
-      <div class="mood-picker hidden" id="mood-picker">
-        <p class="mood-title">Set your vibe</p>
-        <div class="mood-grid">
-          <button class="mood-btn" data-mood="open" style="--mc:#f97316">
-            <svg class="mood-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
-            Open
-          </button>
-          <button class="mood-btn" data-mood="chill" style="--mc:#06b6d4">
-            <svg class="mood-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-            Chill
-          </button>
-          <button class="mood-btn" data-mood="lost" style="--mc:#a855f7">
-            <svg class="mood-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-            Lost
-          </button>
-          <button class="mood-btn" data-mood="bored" style="--mc:#eab308">
-            <svg class="mood-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><line x1="8" y1="15" x2="16" y2="15"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-            Bored
-          </button>
-          <button class="mood-btn" data-mood="curious" style="--mc:#22c55e">
-            <svg class="mood-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            Curious
-          </button>
-          <button class="mood-btn" data-mood="observe" style="--mc:#64748b">
-            <svg class="mood-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
-            Observe
-          </button>
-        </div>
-        <button class="mood-clear" id="mood-clear">Clear mood</button>
-      </div>
+  <!-- ── INBOX VIEW ── -->
+  <div id="view-inbox" class="view">
+    <div class="page-header">
+      <h2>Inbox</h2>
+      <div class="header-meta" id="inbox-meta">Active threads</div>
     </div>
-
-    <!-- ─── INBOX VIEW ─── -->
-    <div id="view-inbox" class="view">
-      <div class="page-header">
-        <h2>Inbox</h2>
-        <div class="header-meta" id="inbox-meta">Active threads</div>
-      </div>
-      <div class="inbox-tabs">
-        <button class="inbox-tab active" data-itab="active">Active</button>
-        <button class="inbox-tab" data-itab="ghosts">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;display:inline-block;vertical-align:middle;margin-right:4px"><path d="M9 10h.01M15 10h.01M12 2a7 7 0 0 1 7 7v8l-2-2-2 2-2-2-2 2-2-2-2 2V9a7 7 0 0 1 7-7z"/></svg>
-          Ghosts
-        </button>
-      </div>
-      <div id="inbox-active" class="inbox-panel active">
-        <div class="thread-list" id="thread-list">
-          <div class="empty-state">
-            <div class="empty-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            </div>
-            <p>No active threads yet</p>
-            <span>Start a conversation on the map</span>
-          </div>
-        </div>
-      </div>
-      <div id="inbox-ghosts" class="inbox-panel">
-        <div class="ghost-info-banner">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 10h.01M15 10h.01M12 2a7 7 0 0 1 7 7v8l-2-2-2 2-2-2-2 2-2-2-2 2V9a7 7 0 0 1 7-7z"/></svg>
-          <p>Messages from people who left your zone before you could reply. If they return within 24h, the thread reactivates.</p>
-        </div>
-        <div class="thread-list" id="ghost-list">
-          <div class="empty-state">
-            <div class="empty-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 10h.01M15 10h.01M12 2a7 7 0 0 1 7 7v8l-2-2-2 2-2-2-2 2-2-2-2 2V9a7 7 0 0 1 7-7z"/></svg>
-            </div>
-            <p>No ghost messages yet</p>
-            <span>Miss a reply and see them here</span>
-          </div>
-        </div>
-      </div>
+    <div class="inbox-tabs">
+      <button class="inbox-tab active" data-itab="active">Active</button>
+      <button class="inbox-tab" data-itab="ghosts">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;display:inline-block;vertical-align:middle;margin-right:4px"><path d="M9 10h.01M15 10h.01M12 2a7 7 0 0 1 7 7v8l-2-2-2 2-2-2-2 2-2-2-2 2V9a7 7 0 0 1 7-7z"/></svg>
+        Ghosts
+      </button>
     </div>
-
-    <!-- ─── CROWD VIEW ─── -->
-    <div id="view-crowd" class="view">
-      <div class="page-header">
-        <button class="back-btn" onclick="showView('map')" aria-label="Back">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="15 18 9 12 15 6"/></svg>
-        </button>
-        <h2>Crowd Mode</h2>
-        <div class="crowd-count-badge" id="crowd-count-badge">0 here</div>
-      </div>
-      <div class="crowd-info" id="crowd-info">
-        <div class="crowd-pulse-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        </div>
-        <p id="crowd-status-text">Need 10+ people in 200m to activate Crowd Mode</p>
-      </div>
-      <div class="crowd-messages" id="crowd-messages">
+    <div id="inbox-active" class="inbox-panel active">
+      <div class="thread-list" id="thread-list">
         <div class="empty-state">
-          <div class="empty-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          </div>
-          <p>Crowd channel is quiet</p>
-          <span>Be the first to say something</span>
+          <div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+          <p>No active threads yet</p><span>Tap an orb on the map to start talking</span>
         </div>
-      </div>
-      <div class="crowd-input-bar">
-        <input type="text" id="crowd-input" placeholder="Say something to the crowd..." maxlength="200" />
-        <button class="send-btn" id="btn-crowd-send" aria-label="Send message">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-        </button>
       </div>
     </div>
-
-    <!-- ─── PROFILE VIEW ─── -->
-    <div id="view-profile" class="view">
-      <div class="page-header">
-        <h2>Profile</h2>
-        <button class="icon-btn" id="btn-settings" onclick="showView('settings')" aria-label="Settings">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        </button>
+    <div id="inbox-ghosts" class="inbox-panel">
+      <div class="ghost-info-banner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 10h.01M15 10h.01M12 2a7 7 0 0 1 7 7v8l-2-2-2 2-2-2-2 2-2-2-2 2V9a7 7 0 0 1 7-7z"/></svg>
+        <p>Messages from people who left your zone before you replied. If they return within 24h, the thread reactivates.</p>
       </div>
-      <div class="profile-card">
-        <div class="profile-avatar-wrap">
-          <div class="profile-avatar" id="profile-avatar-display">
-            <span id="profile-avatar-initial">?</span>
-            <img id="profile-avatar-img" src="" alt="" style="display:none" />
-          </div>
-          <button class="avatar-edit-btn" id="btn-upload-photo" aria-label="Upload photo">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-          </button>
+      <div class="thread-list" id="ghost-list">
+        <div class="empty-state">
+          <div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 10h.01M15 10h.01M12 2a7 7 0 0 1 7 7v8l-2-2-2 2-2-2-2 2-2-2-2 2V9a7 7 0 0 1 7-7z"/></svg></div>
+          <p>No ghost messages yet</p><span>Miss a reply and see them here</span>
         </div>
-        <h3 id="profile-name-display">—</h3>
-        <p class="profile-email-display" id="profile-email-display">—</p>
-        <div class="profile-mood-display" id="profile-mood-display">No mood set</div>
-        <div class="drift-stats">
-          <div class="stat">
-            <span class="stat-value" id="stat-zones">0</span>
-            <span class="stat-label">Zones Drifted</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value" id="stat-convos">0</span>
-            <span class="stat-label">Conversations</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value" id="stat-ghosts">0</span>
-            <span class="stat-label">Ghosts Left</span>
-          </div>
-        </div>
-      </div>
-      <div class="profile-bio-section">
-        <label>One-liner bio</label>
-        <div class="bio-row">
-          <input type="text" id="profile-bio-input" placeholder="Add a bio..." maxlength="60" />
-          <button class="save-bio-btn" id="btn-save-bio">Save</button>
-        </div>
-      </div>
-      <button class="btn-danger" id="btn-logout">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-        Sign Out
-      </button>
-    </div>
-
-    <!-- ─── SETTINGS VIEW ─── -->
-    <div id="view-settings" class="view">
-      <div class="page-header">
-        <button class="back-btn" onclick="showView('profile')" aria-label="Back">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="15 18 9 12 15 6"/></svg>
-        </button>
-        <h2>Settings</h2>
-      </div>
-      <div class="settings-list">
-
-        <div class="settings-section">
-          <p class="settings-section-title">Privacy</p>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span>Appear on map</span>
-              <small>Others in your zone can see your orb</small>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" id="setting-visible" checked />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span>Show motion trail</span>
-              <small>Display your movement direction to others</small>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" id="setting-trail" checked />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-        </div>
-
-        <div class="settings-section">
-          <p class="settings-section-title">Notifications</p>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span>New nearby user</span>
-              <small>Pulse when someone enters your zone</small>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" id="setting-notif-nearby" checked />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span>Ghost reactivated</span>
-              <small>When a ghost returns to your zone</small>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" id="setting-notif-ghost" checked />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-        </div>
-
-        <div class="settings-section">
-          <p class="settings-section-title">Zone</p>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span>Zone radius</span>
-              <small id="radius-label">500 meters</small>
-            </div>
-            <select id="setting-radius" class="setting-select">
-              <option value="200">200m</option>
-              <option value="500" selected>500m</option>
-              <option value="1000">1km</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="settings-section">
-          <p class="settings-section-title">Account</p>
-          <div class="setting-row clickable" id="btn-change-pw">
-            <div class="setting-info">
-              <span>Change password</span>
-              <small>Send a reset email</small>
-            </div>
-            <svg class="setting-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-          </div>
-          <div class="setting-row clickable danger-row" id="btn-delete-account">
-            <div class="setting-info">
-              <span>Delete account</span>
-              <small>Permanently remove your data</small>
-            </div>
-            <svg class="setting-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-          </div>
-        </div>
-
-      </div>
-    </div>
-
-    <!-- ─── BOTTOM NAV ─── -->
-    <nav class="bottom-nav" id="bottom-nav">
-      <button class="nav-btn active" data-view="map">
-        <!-- Radar / signal icon -->
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-          <path d="M5.636 5.636a9 9 0 1 0 12.728 0"/>
-          <path d="M8.465 8.465a5 5 0 1 0 7.07 0"/>
-          <circle cx="12" cy="12" r="1" fill="currentColor"/>
-        </svg>
-        <span>Map</span>
-      </button>
-      <button class="nav-btn" data-view="inbox">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-        </svg>
-        <span>Inbox</span>
-        <span class="nav-badge hidden" id="inbox-badge">0</span>
-      </button>
-      <button class="nav-btn" data-view="profile">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-          <circle cx="12" cy="7" r="4"/>
-        </svg>
-        <span>Profile</span>
-      </button>
-    </nav>
-  </div>
-
-  <!-- ═══════════════════════════════════════ -->
-  <!--  MESSAGE THREAD MODAL                   -->
-  <!-- ═══════════════════════════════════════ -->
-  <div id="modal-thread" class="modal hidden">
-    <div class="modal-backdrop" onclick="closeThread()"></div>
-    <div class="modal-sheet">
-      <div class="thread-header">
-        <button class="close-btn" onclick="closeThread()" aria-label="Close">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-        <div class="thread-user-info">
-          <div class="thread-orb" id="thread-orb"></div>
-          <div>
-            <h4 id="thread-user-name">—</h4>
-            <span class="thread-status" id="thread-status">in zone</span>
-          </div>
-        </div>
-        <div class="thread-zone-timer" id="thread-zone-timer"></div>
-      </div>
-      <div class="thread-messages" id="thread-messages">
-        <div class="thread-ghost-note hidden" id="thread-ghost-note">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 10h.01M15 10h.01M12 2a7 7 0 0 1 7 7v8l-2-2-2 2-2-2-2 2-2-2-2 2V9a7 7 0 0 1 7-7z"/></svg>
-          <span>This person left the zone. Messages are frozen until they return.</span>
-        </div>
-      </div>
-      <div class="thread-input-bar" id="thread-input-bar">
-        <input type="text" id="thread-input" placeholder="Say something..." maxlength="500" />
-        <button class="send-btn" id="btn-thread-send" aria-label="Send">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-        </button>
       </div>
     </div>
   </div>
 
-  <!-- ═══════════════════════════════════════ -->
-  <!--  PROFILE CARD MODAL (tap orb on map)    -->
-  <!-- ═══════════════════════════════════════ -->
-  <div id="modal-profile-card" class="modal hidden">
-    <div class="modal-backdrop" onclick="closeProfileCard()"></div>
-    <div class="profile-card-sheet">
-      <div class="pc-orb" id="pc-orb"></div>
-      <h3 id="pc-name">—</h3>
-      <p class="pc-bio" id="pc-bio">—</p>
-      <div class="pc-meta">
-        <span id="pc-distance">—</span>
-        <span class="pc-dot">·</span>
-        <span id="pc-time-in-zone">—</span>
-        <span class="pc-dot">·</span>
-        <span id="pc-mood-label">—</span>
+  <!-- ── CROWD VIEW ── -->
+  <div id="view-crowd" class="view">
+    <div class="page-header">
+      <button class="back-btn" onclick="showView('map')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="15 18 9 12 15 6"/></svg></button>
+      <h2>Crowd Mode</h2>
+      <div class="crowd-count-badge" id="crowd-count-badge">0 here</div>
+    </div>
+    <div class="crowd-info" id="crowd-info">
+      <div class="crowd-pulse-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
       </div>
-      <div class="pc-actions">
-        <button class="btn-primary" id="btn-pc-message">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;display:inline-block;vertical-align:middle;margin-right:6px"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-          Send Message
-        </button>
-        <button class="btn-ghost-outline" onclick="closeProfileCard()">Close</button>
-      </div>
+      <p id="crowd-status-text">Need 10+ people in 200m to activate Crowd Mode</p>
+    </div>
+    <div class="crowd-messages" id="crowd-messages"></div>
+    <div class="crowd-input-bar">
+      <input type="text" id="crowd-input" placeholder="Say something to the crowd..." maxlength="200" />
+      <button class="send-btn" id="btn-crowd-send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
     </div>
   </div>
 
-  <!-- ═══════════════════════════════════════ -->
-  <!--  TOAST NOTIFICATION                     -->
-  <!-- ═══════════════════════════════════════ -->
-  <div id="toast" class="toast hidden"></div>
-
-  <!-- ═══════════════════════════════════════ -->
-  <!--  ANCHOR MODE BANNER                     -->
-  <!-- ═══════════════════════════════════════ -->
-  <div id="anchor-banner" class="anchor-banner hidden">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg>
-    <span>Anchor mode — you appear as a local landmark to nearby users</span>
-    <button onclick="disableAnchor()" aria-label="Dismiss anchor mode">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+  <!-- ── PROFILE VIEW ── -->
+  <div id="view-profile" class="view">
+    <div class="page-header">
+      <h2>Profile</h2>
+      <button class="icon-btn" onclick="showView('settings')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+    <div class="profile-card">
+      <div class="profile-avatar-wrap">
+        <div class="profile-avatar" id="profile-avatar-display">
+          <span id="profile-avatar-initial">?</span>
+          <img id="profile-avatar-img" src="" alt="" style="display:none" />
+        </div>
+        <button class="avatar-edit-btn" id="btn-upload-photo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        </button>
+      </div>
+      <h3 id="profile-name-display">—</h3>
+      <p class="profile-email-display" id="profile-email-display">—</p>
+      <div class="profile-mood-display" id="profile-mood-display">No mood set</div>
+      <div class="drift-stats">
+        <div class="stat"><span class="stat-value" id="stat-zones">0</span><span class="stat-label">Zones Drifted</span></div>
+        <div class="stat"><span class="stat-value" id="stat-convos">0</span><span class="stat-label">Conversations</span></div>
+        <div class="stat"><span class="stat-value" id="stat-ghosts">0</span><span class="stat-label">Ghosts Left</span></div>
+      </div>
+    </div>
+    <div class="profile-bio-section">
+      <label>One-liner bio</label>
+      <div class="bio-row">
+        <input type="text" id="profile-bio-input" placeholder="Add a bio..." maxlength="60" />
+        <button class="save-bio-btn" id="btn-save-bio">Save</button>
+      </div>
+    </div>
+    <!-- Dev: seed test users -->
+    <button class="btn-seed" id="btn-seed-users">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+      Seed 20 Test Users Nearby
+    </button>
+    <button class="btn-danger" id="btn-logout">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      Sign Out
     </button>
   </div>
 
-  <script src="app.js"></script>
+  <!-- ── SETTINGS VIEW ── -->
+  <div id="view-settings" class="view">
+    <div class="page-header">
+      <button class="back-btn" onclick="showView('profile')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="15 18 9 12 15 6"/></svg></button>
+      <h2>Settings</h2>
+    </div>
+    <div class="settings-list">
+      <div class="settings-section">
+        <p class="settings-section-title">Privacy</p>
+        <div class="setting-row">
+          <div class="setting-info"><span>Appear on map</span><small>Others in your zone can see your orb</small></div>
+          <label class="toggle-switch"><input type="checkbox" id="setting-visible" checked /><span class="toggle-slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info"><span>Show motion trail</span><small>Display your movement direction</small></div>
+          <label class="toggle-switch"><input type="checkbox" id="setting-trail" checked /><span class="toggle-slider"></span></label>
+        </div>
+      </div>
+      <div class="settings-section">
+        <p class="settings-section-title">Notifications</p>
+        <div class="setting-row">
+          <div class="setting-info"><span>New nearby user</span><small>Pulse when someone enters your zone</small></div>
+          <label class="toggle-switch"><input type="checkbox" id="setting-notif-nearby" checked /><span class="toggle-slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info"><span>Ghost reactivated</span><small>When a ghost returns to your zone</small></div>
+          <label class="toggle-switch"><input type="checkbox" id="setting-notif-ghost" checked /><span class="toggle-slider"></span></label>
+        </div>
+      </div>
+      <div class="settings-section">
+        <p class="settings-section-title">Zone</p>
+        <div class="setting-row">
+          <div class="setting-info"><span>Zone radius</span><small id="radius-label">500 meters</small></div>
+          <select id="setting-radius" class="setting-select">
+            <option value="200">200m</option>
+            <option value="500" selected>500m</option>
+            <option value="1000">1km</option>
+          </select>
+        </div>
+      </div>
+      <div class="settings-section">
+        <p class="settings-section-title">Account</p>
+        <div class="setting-row clickable" id="btn-change-pw">
+          <div class="setting-info"><span>Change password</span><small>Send a reset email</small></div>
+          <svg class="setting-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="setting-row clickable danger-row" id="btn-delete-account">
+          <div class="setting-info"><span>Delete account</span><small>Permanently remove your data</small></div>
+          <svg class="setting-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── BOTTOM NAV (4 items) ── -->
+  <nav class="bottom-nav" id="bottom-nav">
+    <button class="nav-btn active" data-view="map">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5.636 5.636a9 9 0 1 0 12.728 0"/><path d="M8.465 8.465a5 5 0 1 0 7.07 0"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg>
+      <span>Map</span>
+    </button>
+    <button class="nav-btn" data-view="posts">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+      <span>Posts</span>
+    </button>
+    <button class="nav-btn" data-view="inbox">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <span>Inbox</span>
+      <span class="nav-badge hidden" id="inbox-badge">0</span>
+    </button>
+    <button class="nav-btn" data-view="profile">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span>Profile</span>
+    </button>
+  </nav>
+</div>
+
+<!-- ══════════════════════════════════════════
+     MESSAGE THREAD MODAL
+══════════════════════════════════════════ -->
+<div id="modal-thread" class="modal hidden">
+  <div class="modal-backdrop" onclick="closeThread()"></div>
+  <div class="modal-sheet">
+    <div class="thread-header">
+      <button class="close-btn" onclick="closeThread()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      <div class="thread-user-info">
+        <div class="thread-orb" id="thread-orb"></div>
+        <div><h4 id="thread-user-name">—</h4><span class="thread-status" id="thread-status">in zone</span></div>
+      </div>
+      <div class="thread-zone-timer" id="thread-zone-timer"></div>
+    </div>
+    <div class="thread-messages" id="thread-messages">
+      <div class="thread-ghost-note hidden" id="thread-ghost-note">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 10h.01M15 10h.01M12 2a7 7 0 0 1 7 7v8l-2-2-2 2-2-2-2 2-2-2-2 2V9a7 7 0 0 1 7-7z"/></svg>
+        <span>This person left the zone. Messages are frozen until they return.</span>
+      </div>
+    </div>
+    <div class="thread-input-bar" id="thread-input-bar">
+      <input type="text" id="thread-input" placeholder="Say something..." maxlength="500" />
+      <button class="send-btn" id="btn-thread-send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     PROFILE CARD MODAL
+══════════════════════════════════════════ -->
+<div id="modal-profile-card" class="modal hidden">
+  <div class="modal-backdrop" onclick="closeProfileCard()"></div>
+  <div class="profile-card-sheet">
+    <div class="pc-orb" id="pc-orb"></div>
+    <h3 id="pc-name">—</h3>
+    <p class="pc-bio" id="pc-bio">—</p>
+    <div class="pc-meta">
+      <span id="pc-distance">—</span><span class="pc-dot">·</span>
+      <span id="pc-time-in-zone">—</span><span class="pc-dot">·</span>
+      <span id="pc-mood-label">—</span>
+    </div>
+    <div class="pc-actions">
+      <button class="btn-primary" id="btn-pc-message">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;display:inline-block;vertical-align:middle;margin-right:6px"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        Send Message
+      </button>
+      <button class="btn-ghost-outline" onclick="closeProfileCard()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     CREATE POST MODAL
+══════════════════════════════════════════ -->
+<div id="modal-create-post" class="modal hidden">
+  <div class="modal-backdrop" onclick="closeCreatePost()"></div>
+  <div class="create-post-sheet">
+    <div class="cp-header">
+      <button class="close-btn" onclick="closeCreatePost()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      <h4>New Post</h4>
+      <button class="cp-submit-btn" id="btn-submit-post">Post</button>
+    </div>
+    <div class="cp-body">
+      <div class="cp-avatar" id="cp-avatar"></div>
+      <textarea id="cp-text" placeholder="What's on your mind? Only people in your zone can see this." maxlength="300" rows="4"></textarea>
+    </div>
+
+    <!-- Media preview -->
+    <div class="cp-media-preview hidden" id="cp-media-preview">
+      <img id="cp-preview-img" src="" alt="" style="display:none" />
+      <video id="cp-preview-vid" src="" controls playsinline style="display:none"></video>
+      <button class="cp-remove-media" id="cp-remove-media" title="Remove media">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <div class="cp-toolbar">
+      <div class="cp-media-btns">
+        <button class="cp-media-btn" id="btn-add-image" title="Add photo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          Photo
+        </button>
+        <button class="cp-media-btn" id="btn-add-video" title="Add video">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+          Video
+        </button>
+      </div>
+      <div class="cp-meta-row-inline">
+        <div class="cp-zone-tag">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px"><path d="M5.636 5.636a9 9 0 1 0 12.728 0"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg>
+          <strong id="cp-zone-radius">500m</strong>
+        </div>
+        <span class="cp-char-count" id="cp-char-count">300</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast" class="toast hidden"></div>
+
+<!-- ANCHOR BANNER -->
+<div id="anchor-banner" class="anchor-banner hidden">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg>
+  <span>Anchor mode active — you appear as a local landmark</span>
+  <button onclick="disableAnchor()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+</div>
+
+<script src="app.js"></script>
 </body>
 </html>
