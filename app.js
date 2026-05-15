@@ -1,1380 +1,1044 @@
-/* ═══════════════════════════════════════════════════
-   DRIFT — app.js  v2
-   CSS Hybrid Map · Posts Swipe · Seed Data
-   ═══════════════════════════════════════════════════ */
+// ============================================================
+//  ORBIT — App Logic
+//  No composite Firestore indexes — all filtering client-side
+// ============================================================
 
-// ── CONFIG ────────────────────────────────────────
-const firebaseConfig = {
-  apiKey: "AIzaSyC9jF-ocy6HjsVzWVVlAyXW-4aIFgA79-A",
-    authDomain: "crypto-6517d.firebaseapp.com",
-    projectId: "crypto-6517d",
-    storageBucket: "crypto-6517d.firebasestorage.app",
-    messagingSenderId: "60263975159",
-    appId: "1:60263975159:web:bd53dcaad86d6ed9592bf2"
-};
-const CLOUDINARY_CLOUD_NAME    = "ddtdqrh1b";
-const CLOUDINARY_UPLOAD_PRESET = "profile-pictures";
+import { FIREBASE_CONFIG, CLOUDINARY_CONFIG, LOCATION_UPDATE_INTERVAL, EXPLORE_RADIUS_KM } from './config.js';
 
-firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
-const db   = firebase.firestore();
+import { initializeApp }                          from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getAuth, createUserWithEmailAndPassword,
+         signInWithEmailAndPassword, signOut,
+         onAuthStateChanged, updateProfile }       from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getFirestore, doc, setDoc, getDoc,
+         updateDoc, collection, query, where,
+         onSnapshot, addDoc, getDocs,
+         serverTimestamp, orderBy, limit,
+         Timestamp, deleteDoc }                    from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
-// ── CONSTANTS ─────────────────────────────────────
-const ZONE_RADIUS_DEFAULT = 500;
-const CROWD_THRESHOLD     = 10;
-const CROWD_RADIUS        = 200;
-const ORB_COLORS = {
-  open:"#f97316", chill:"#06b6d4", lost:"#a855f7",
-  bored:"#eab308", curious:"#22c55e", observe:"#64748b", default:"#7c3aed",
-};
-const SEED_NAMES = [
-  "Alex","Maya","Jordan","Riley","Sam","Morgan","Kai","Avery","Quinn","Drew",
-  "Sage","River","Blake","Casey","Dakota","Emery","Finley","Hayden","Jamie","Logan",
-];
-const SEED_BIOS = [
-  "just drifting through","coffee & chaos","perpetually lost","night owl","here for a good time",
-  "exploring the city","in my own world","local adventurer","people watcher","finding my way",
-  "on a mission","curious about everything","city nomad","just passing through","living in the moment",
-  "always exploring","early bird","midnight drifter","lost and loving it","vibes only",
-];
-const SEED_MOODS = ["open","chill","lost","bored","curious","observe",null,null];
+// ── Init ─────────────────────────────────────────────────────
+const firebaseApp = initializeApp(FIREBASE_CONFIG);
+const auth = getAuth(firebaseApp);
+const db   = getFirestore(firebaseApp);
 
-// ── STATE ─────────────────────────────────────────
-const state = {
-  uid:null, user:null, authUser:null, coords:null,
-  nearbyUsers:[], threads:[], ghosts:[],
-  currentThread:null, currentProfileCard:null,
-  anchorMode:false, currentMood:null,
-  zoneRadius:ZONE_RADIUS_DEFAULT,
-  currentView:"map",
-  unsubscribers:[],
-  mapZoom:1.0,
-  mapPan:{x:0,y:0},
-  mapDragging:false, mapDragStart:{x:0,y:0}, mapDragPanStart:{x:0,y:0},
-  geoWatchId:null,
-  // Posts
-  postQueue:[], currentPostIndex:0,
-  postSwiping:false, postSwipeStartX:0, postSwipeStartY:0,
+// ── State ─────────────────────────────────────────────────────
+const S = {
+  user: null, profile: null,
+  mapMode: 'friends',
+  activePanel: 'map',
+  activeChatUid: null,
+  viewingUid: null,
+  myLat: null, myLng: null, mySpeed: 0,
+  myBattery: null, myCharging: false,
+  ghostMode: false,
+  watchId: null,
+  lastLocationSent: 0,
+  friends: {},        // uid → profile
+  friendRequests: [], // pending incoming docs
+  nearbyUsers: {},    // uid → profile
+  markers: {},        // uid → L.Marker (reused, never recreated)
+  markerPositions: {},
+  selfMarker: null,
+  map: null,
+  unsubs: [],
+  convUnsub: null,
+  chatUnsub: null,
 };
 
-// ── UTILS ─────────────────────────────────────────
-function haversineDistance(lat1,lng1,lat2,lng2){
-  const R=6371000, dLat=(lat2-lat1)*Math.PI/180, dLng=(lng2-lng1)*Math.PI/180;
-  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
-  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+const $ = id => document.getElementById(id);
+
+// ════════════════════════════════════════════════════════════
+//  AUTH STATE
+// ════════════════════════════════════════════════════════════
+onAuthStateChanged(auth, async user => {
+  if (user) {
+    S.user = user;
+    await loadMyProfile();
+    showScreen('app');
+    initApp();
+  } else {
+    S.user = null;
+    showScreen('auth');
+  }
+  hideLoader();
+});
+
+function showScreen(name) {
+  $('auth-screen').classList.toggle('active', name === 'auth');
+  $('app-screen').classList.toggle('active',  name === 'app');
 }
-function bearingTo(lat1,lng1,lat2,lng2){
-  const φ1=lat1*Math.PI/180,φ2=lat2*Math.PI/180,Δλ=(lng2-lng1)*Math.PI/180;
-  return(Math.atan2(Math.sin(Δλ)*Math.cos(φ2),Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ))*180/Math.PI+360)%360;
-}
-function orbColor(mood){return ORB_COLORS[mood]||ORB_COLORS.default;}
-function nameInitial(n){return(n||"?")[0].toUpperCase();}
-function escapeHtml(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
-function formatRelativeTime(ts){
-  if(!ts)return""; const ms=Date.now()-(ts.toDate?ts.toDate().getTime():ts);
-  if(ms<60000)return"just now"; if(ms<3600000)return`${Math.floor(ms/60000)}m ago`;
-  if(ms<86400000)return`${Math.floor(ms/3600000)}h ago`; return`${Math.floor(ms/86400000)}d ago`;
-}
-function randomBetween(min,max){return Math.random()*(max-min)+min;}
-function randomOffset(meters){
-  const lat=meters/111320; const lng=meters/(111320*Math.cos((state.coords?.lat||40.7)*Math.PI/180));
-  return{lat:(Math.random()-0.5)*2*lat, lng:(Math.random()-0.5)*2*lng};
+function hideLoader() {
+  const el = $('loader');
+  el.classList.add('hide');
+  setTimeout(() => el.style.display = 'none', 400);
 }
 
-let toastTimer=null;
-function showToast(message,type="default"){
-  const toast=document.getElementById("toast");
-  const icons={
-    success:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color:#22c55e;width:15px;height:15px"><polyline points="20 6 9 17 4 12"/></svg>`,
-    error:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#ef4444;width:15px;height:15px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
-    info:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#06b6d4;width:15px;height:15px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`,
-    ghost:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#a78bfa;width:15px;height:15px"><path d="M9 10h.01M15 10h.01M12 2a7 7 0 0 1 7 7v8l-2-2-2 2-2-2-2 2-2-2-2 2V9a7 7 0 0 1 7-7z"/></svg>`,
+// ════════════════════════════════════════════════════════════
+//  AUTH FORMS
+// ════════════════════════════════════════════════════════════
+document.querySelectorAll('.auth-tab').forEach(btn =>
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.auth-tab').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('active'));
+    btn.classList.add('active');
+    $(`${btn.dataset.tab}-form`).classList.add('active');
+  })
+);
+
+$('login-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = $('login-btn');
+  setBtnLoading(btn, true);
+  $('login-error').textContent = '';
+  try {
+    await signInWithEmailAndPassword(auth, $('login-email').value.trim(), $('login-password').value);
+  } catch (err) {
+    $('login-error').textContent = authErr(err.code);
+    setBtnLoading(btn, false);
+  }
+});
+
+$('register-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = $('register-btn');
+  setBtnLoading(btn, true);
+  $('register-error').textContent = '';
+  const name = $('reg-name').value.trim();
+  const email = $('reg-email').value.trim();
+  const pass  = $('reg-password').value;
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, pass);
+    await updateProfile(cred.user, { displayName: name });
+    await setDoc(doc(db, 'users', cred.user.uid), {
+      uid: cred.user.uid, displayName: name, email,
+      photoURL: '', isPublic: false, ghostMode: false,
+      location: null, speed: 0, battery: null, isCharging: false,
+      status: 'offline', zones: [], createdAt: serverTimestamp(), lastSeen: serverTimestamp(),
+    });
+  } catch (err) {
+    $('register-error').textContent = authErr(err.code);
+    setBtnLoading(btn, false);
+  }
+});
+
+function setBtnLoading(btn, on) {
+  btn.disabled = on;
+  btn.querySelector('.btn-text').hidden    = on;
+  btn.querySelector('.btn-spinner').hidden = !on;
+}
+function authErr(code) {
+  const m = {
+    'auth/user-not-found':       'No account with that email.',
+    'auth/wrong-password':       'Wrong password.',
+    'auth/invalid-credential':   'Incorrect email or password.',
+    'auth/email-already-in-use': 'Email already registered.',
+    'auth/weak-password':        'Password needs at least 6 characters.',
+    'auth/invalid-email':        'Invalid email address.',
+    'auth/too-many-requests':    'Too many attempts. Try again later.',
   };
-  toast.innerHTML=(icons[type]||icons.info)+`<span>${message}</span>`;
-  toast.classList.remove("hidden");
-  clearTimeout(toastTimer);
-  toastTimer=setTimeout(()=>toast.classList.add("hidden"),3200);
+  return m[code] || 'Something went wrong. Try again.';
 }
 
-function showScreen(id){
-  document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
-  document.getElementById(id)?.classList.add("active");
+// ════════════════════════════════════════════════════════════
+//  PROFILE LOAD
+// ════════════════════════════════════════════════════════════
+async function loadMyProfile() {
+  const snap = await getDoc(doc(db, 'users', S.user.uid));
+  if (snap.exists()) S.profile = snap.data();
 }
 
-function showView(name){
-  state.currentView=name;
-  document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
-  document.getElementById(`view-${name}`)?.classList.add("active");
-  document.querySelectorAll(".nav-btn").forEach(b=>b.classList.toggle("active",b.dataset.view===name));
-  if(name==="inbox")   renderInbox();
-  if(name==="crowd")   initCrowdView();
-  if(name==="profile") renderProfile();
-  if(name==="posts")   renderPostsPage();
-  if(name==="map")     { updateZoneRingSize(); syncOrbElements(); }
-}
-
-function togglePw(id){const el=document.getElementById(id);el.type=el.type==="password"?"text":"password";}
-
-// ── AUTH CANVAS ───────────────────────────────────
-function initAuthCanvas(){
-  const canvas=document.getElementById("auth-canvas"); if(!canvas)return;
-  const ctx=canvas.getContext("2d");
-  const particles=[];
-  function resize(){canvas.width=window.innerWidth;canvas.height=window.innerHeight;}
-  resize();
-  for(let i=0;i<30;i++) particles.push({
-    x:Math.random()*window.innerWidth, y:Math.random()*window.innerHeight*0.6,
-    r:Math.random()*2+0.5, vx:(Math.random()-.5)*.3, vy:(Math.random()-.5)*.3,
-    alpha:Math.random()*.5+.15, color:Math.random()>.6?"#7c3aed":"#06b6d4",
-  });
-  function draw(){
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    const g=ctx.createRadialGradient(canvas.width/2,canvas.height*.3,0,canvas.width/2,canvas.height*.3,canvas.height*.7);
-    g.addColorStop(0,"rgba(124,58,237,0.12)"); g.addColorStop(.5,"rgba(6,182,212,0.05)"); g.addColorStop(1,"transparent");
-    ctx.fillStyle=g; ctx.fillRect(0,0,canvas.width,canvas.height);
-    particles.forEach(p=>{
-      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
-      ctx.fillStyle=p.color+Math.round(p.alpha*255).toString(16).padStart(2,"0"); ctx.fill();
-      p.x+=p.vx; p.y+=p.vy;
-      if(p.x<0||p.x>canvas.width) p.vx*=-1;
-      if(p.y<0||p.y>canvas.height*.6) p.vy*=-1;
-    });
-    requestAnimationFrame(draw);
-  }
-  draw();
-}
-
-// ── AUTH ──────────────────────────────────────────
-function initAuth(){
-  document.querySelectorAll(".auth-tab").forEach(tab=>{
-    tab.addEventListener("click",()=>{
-      document.querySelectorAll(".auth-tab").forEach(t=>t.classList.remove("active"));
-      document.querySelectorAll(".auth-form").forEach(f=>f.classList.remove("active"));
-      tab.classList.add("active");
-      document.getElementById(`auth-${tab.dataset.tab}`)?.classList.add("active");
-    });
-  });
-
-  document.getElementById("btn-login").addEventListener("click",async()=>{
-    const email=document.getElementById("login-email").value.trim();
-    const pass=document.getElementById("login-password").value;
-    const errEl=document.getElementById("login-error"); errEl.textContent="";
-    if(!email||!pass){errEl.textContent="Please fill in all fields.";return;}
-    const btn=document.getElementById("btn-login"); btn.disabled=true; btn.textContent="Signing in...";
-    try{await auth.signInWithEmailAndPassword(email,pass);}
-    catch(e){errEl.textContent=friendlyAuthError(e.code);btn.disabled=false;btn.textContent="Sign In";}
-  });
-
-  document.getElementById("btn-register").addEventListener("click",async()=>{
-    const name=document.getElementById("reg-name").value.trim();
-    const email=document.getElementById("reg-email").value.trim();
-    const pass=document.getElementById("reg-password").value;
-    const errEl=document.getElementById("register-error"); errEl.textContent="";
-    if(!name||!email||!pass){errEl.textContent="Please fill in all fields.";return;}
-    if(pass.length<6){errEl.textContent="Password must be at least 6 characters.";return;}
-    const btn=document.getElementById("btn-register"); btn.disabled=true; btn.textContent="Creating...";
-    try{
-      const cred=await auth.createUserWithEmailAndPassword(email,pass);
-      await cred.user.updateProfile({displayName:name});
-      await createUserDoc(cred.user,name);
-    }catch(e){errEl.textContent=friendlyAuthError(e.code);btn.disabled=false;btn.textContent="Create Account";}
-  });
-
-  const gp=new firebase.auth.GoogleAuthProvider();
-  ["btn-google-login","btn-google-register"].forEach(id=>{
-    document.getElementById(id).addEventListener("click",async()=>{
-      try{
-        const r=await auth.signInWithPopup(gp);
-        if(r.additionalUserInfo.isNewUser) await createUserDoc(r.user,r.user.displayName);
-      }catch(e){
-        const errEl=document.getElementById(id.includes("login")?"login-error":"register-error");
-        errEl.textContent=friendlyAuthError(e.code);
-      }
-    });
-  });
-
-  auth.onAuthStateChanged(async user=>{
-    if(user){
-      state.uid=user.uid; state.authUser=user;
-      await loadUserDoc(user.uid);
-      showScreen("app-screen"); initApp();
-    }else{cleanupApp(); showScreen("auth-screen");}
-  });
-}
-
-function friendlyAuthError(code){
-  return({
-    "auth/user-not-found":"No account found with this email.",
-    "auth/wrong-password":"Incorrect password.",
-    "auth/email-already-in-use":"This email is already registered.",
-    "auth/invalid-email":"Please enter a valid email.",
-    "auth/weak-password":"Password is too weak.",
-    "auth/network-request-failed":"Network error. Check your connection.",
-    "auth/popup-closed-by-user":"Sign-in cancelled.",
-    "auth/too-many-requests":"Too many attempts. Please wait.",
-  })[code]||"Something went wrong. Please try again.";
-}
-
-async function createUserDoc(fbUser,displayName){
-  const ref=db.collection("users").doc(fbUser.uid);
-  const snap=await ref.get();
-  if(!snap.exists){
-    await ref.set({
-      uid:fbUser.uid, displayName:displayName||"Anonymous",
-      email:fbUser.email, photoURL:fbUser.photoURL||null,
-      bio:"", mood:null, anchorMode:false, isVisible:true, showTrail:true,
-      driftScore:0, totalConvos:0, totalGhosts:0, isOnline:true,
-      lastSeen:firebase.firestore.FieldValue.serverTimestamp(),
-      createdAt:firebase.firestore.FieldValue.serverTimestamp(),
-      location:null, isSeeded:false,
-    });
-  }
-}
-
-async function loadUserDoc(uid){
-  const snap=await db.collection("users").doc(uid).get();
-  if(snap.exists) state.user=snap.data();
-}
-
-// ── APP INIT ──────────────────────────────────────
-function initApp(){
-  initNavigation();
-  initCSSMap();
+// ════════════════════════════════════════════════════════════
+//  APP INIT
+// ════════════════════════════════════════════════════════════
+function initApp() {
+  initMap();
   initGeolocation();
-  initMapControls();
-  initMoodPicker();
-  initAnchorMode();
-  initThreadInput();
-  initCrowdInput();
-  initProfile();
-  initSettings();
-  initPostsPage();
-  subscribeToThreads();
-  showView("map");
+  initBattery();
+  updateProfileUI();
+  listenFriends();
+  listenFriendRequests();
+  listenConversations();
+  bindNav();
+  bindTopBar();
+  bindProfile();
+  bindFriends();
+  bindChat();
+  bindModals();
+  bindBackBtns();
 }
 
-function cleanupApp(){
-  state.unsubscribers.forEach(fn=>fn()); state.unsubscribers=[];
-  if(state.geoWatchId!==null){navigator.geolocation.clearWatch(state.geoWatchId);state.geoWatchId=null;}
+// ════════════════════════════════════════════════════════════
+//  MAP — performance-first, zero lag
+// ════════════════════════════════════════════════════════════
+function initMap() {
+  S.map = L.map('map', {
+    zoomControl: false,
+    attributionControl: false,
+    inertia: true,
+    inertiaDeceleration: 2400,
+    inertiaMaxSpeed: 1800,
+    easeLinearity: 0.2,
+    maxZoom: 19, minZoom: 2,
+  }).setView([20, 0], 2);
+
+  // OSM tiles with CSS dark-mode filter — far more readable than CartoDB dark_all
+  // The CSS filter is applied in style.css (.leaflet-tile-pane)
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    detectRetina: true,
+    updateWhenZooming: false,
+    updateWhenIdle: false,
+    keepBuffer: 4,
+  }).addTo(S.map);
+
+  // Force a size recalculation after the map container is fully visible
+  setTimeout(() => S.map.invalidateSize({ animate: false }), 100);
+
+  $('recenter-btn').addEventListener('click', recenterMap);
+  S.map.on('click', () => { if (S.activePanel !== 'map') openPanel('map'); });
 }
 
-// ── NAVIGATION ────────────────────────────────────
-function initNavigation(){
-  document.querySelectorAll(".nav-btn").forEach(btn=>{
-    btn.addEventListener("click",()=>{if(btn.dataset.view) showView(btn.dataset.view);});
-  });
+function recenterMap() {
+  if (S.myLat !== null)
+    S.map.flyTo([S.myLat, S.myLng], 15, { duration: 0.9, easeLinearity: 0.4 });
 }
 
-// ── GEOLOCATION ───────────────────────────────────
-function initGeolocation(){
-  if(!navigator.geolocation){showToast("Geolocation not supported","error");return;}
-  state.geoWatchId=navigator.geolocation.watchPosition(onLocationUpdate,onLocationError,
-    {enableHighAccuracy:true,timeout:10000,maximumAge:5000});
-}
-
-function onLocationUpdate(pos){
-  const{latitude:lat,longitude:lng,accuracy}=pos.coords;
-  const prev=state.coords;
-  state.coords={lat,lng,accuracy};
-  if(state.uid){
-    db.collection("users").doc(state.uid).update({
-      location:new firebase.firestore.GeoPoint(lat,lng),
-      lastSeen:firebase.firestore.FieldValue.serverTimestamp(),isOnline:true,
-    }).catch(()=>{});
+// ── Smooth glide between GPS fixes (Zenly trick) ──────────────
+function animateMarker(uid, lat, lng) {
+  const marker = S.markers[uid];
+  if (!marker) return;
+  const prev = S.markerPositions[uid];
+  S.markerPositions[uid] = { lat, lng };
+  if (!prev) { marker.setLatLng([lat, lng]); return; }
+  const dLat = lat - prev.lat, dLng = lng - prev.lng;
+  // Skip animation if tiny movement (< ~3 m) — avoid jitter
+  if (dLat * dLat + dLng * dLng < 0.0000000008) {
+    marker.setLatLng([lat, lng]); return;
   }
-  const lbl=document.getElementById("location-label");
-  if(lbl) lbl.textContent=`±${Math.round(accuracy)}m accuracy`;
-  loadNearbyUsers();
-  if(prev&&haversineDistance(prev.lat,prev.lng,lat,lng)>200) incrementDriftScore();
-}
-
-function onLocationError(err){
-  showToast({1:"Location access denied.",2:"Location unavailable.",3:"Location request timed out."}[err.code]||"Location error","error");
-  // For testing without GPS, use a fallback location
-  if(!state.coords){
-    state.coords={lat:40.7128,lng:-74.0060,accuracy:10};
-    document.getElementById("location-label").textContent="Using demo location (NYC)";
-    loadNearbyUsers();
+  const DURATION = Math.min(LOCATION_UPDATE_INTERVAL, 12000);
+  const t0 = performance.now();
+  function step(now) {
+    const p = Math.min((now - t0) / DURATION, 1);
+    const e = p < 0.5 ? 2 * p * p : -1 + (4 - 2 * p) * p;
+    marker.setLatLng([prev.lat + dLat * e, prev.lng + dLng * e]);
+    if (p < 1) requestAnimationFrame(step);
   }
+  requestAnimationFrame(step);
 }
 
-function incrementDriftScore(){
-  if(!state.uid)return;
-  db.collection("users").doc(state.uid).update({driftScore:firebase.firestore.FieldValue.increment(1)}).catch(()=>{});
-}
+// ── Create / update marker — NEVER re-add to map ──────────────
+function upsertMarker(uid, profile, isSelf = false) {
+  const { lat, lng } = displayLoc(profile);
+  if (!lat || !lng) return;
 
-// ── NEARBY USERS ──────────────────────────────────
-let nearbyUnsubscribe=null;
-function loadNearbyUsers(){
-  if(!state.coords||!state.uid)return;
-  if(nearbyUnsubscribe)nearbyUnsubscribe();
-  nearbyUnsubscribe=db.collection("users")
-    .where("isOnline","==",true).where("isVisible","==",true).limit(100)
-    .onSnapshot(snap=>{
-      const nearby=[];
-      snap.forEach(doc=>{
-        const u=doc.data(); if(u.uid===state.uid||!u.location)return;
-        const dist=haversineDistance(state.coords.lat,state.coords.lng,u.location.latitude,u.location.longitude);
-        if(dist<=state.zoneRadius) nearby.push({...u,distance:Math.round(dist)});
-      });
-      nearby.sort((a,b)=>a.distance-b.distance);
-      state.nearbyUsers=nearby;
-      updateZoneBadge(nearby.length);
-      renderNearbyStrip(nearby);
-      checkCrowdMode(nearby);
-      checkGhostReactivation();
-      // Update CSS map
-      updateZoneRingSize();
-      syncOrbElements();
-    },()=>{});
-  state.unsubscribers.push(()=>{if(nearbyUnsubscribe)nearbyUnsubscribe();});
-}
+  const sc   = statusClass(profile);
+  const ring = isSelf ? 'self' : (profile.ghostMode ? 'ghost' : sc);
+  const init = (profile.displayName || '?')[0].toUpperCase();
+  const photo = profile.photoURL
+    ? `<img src="${escH(profile.photoURL)}" alt="" loading="lazy"/>`
+    : `<span>${escH(init)}</span>`;
+  const bat = profile.battery != null && !isSelf
+    ? `<div class="bubble-battery${profile.battery < 20 ? ' low' : ''}">${profile.battery}%</div>`
+    : '';
+  const statusTxt = isSelf ? '' : statusText(profile);
 
-function updateZoneBadge(count){
-  const el=document.getElementById("zone-count"); if(el) el.textContent=`${count} nearby`;
-}
-
-// ══════════════════════════════════════════════════
-//  CSS HYBRID MAP  (no rAF loop — GPU animations)
-// ══════════════════════════════════════════════════
-// ── SOCIAL PROXIMITY VIEW (no canvas, no lag) ─────
-function initCSSMap(){
-  updateSelfOrb();
-  window.addEventListener("resize",()=>{updateZoneRingSize();syncOrbElements();});
-}
-
-function updateSelfOrb(){
-  const initial=document.getElementById("self-orb-initial");
-  const photo=document.getElementById("self-orb-photo");
-  const name=state.user?.displayName||state.authUser?.displayName||"?";
-  if(initial) initial.textContent=nameInitial(name);
-  if(photo&&state.user?.photoURL){
-    photo.style.backgroundImage=`url(${state.user.photoURL})`;
-    photo.style.backgroundSize="cover";
-    photo.style.borderRadius="50%";
-    if(initial) initial.style.display="none";
-  }
-}
-
-function getMapMetrics(){
-  const wrap=document.getElementById("map-wrap"); if(!wrap)return null;
-  const W=wrap.offsetWidth, H=wrap.offsetHeight;
-  const ppm=(Math.min(W,H)*0.32/state.zoneRadius)*state.mapZoom;
-  return{W,H,ppm};
-}
-
-function updateZoneRingSize(){
-  const ring=document.getElementById("map-zone-ring"); if(!ring)return;
-  const m=getMapMetrics(); if(!m)return;
-  const size=state.zoneRadius*m.ppm*2;
-  ring.style.width=size+"px"; ring.style.height=size+"px";
-  ring.style.transform=`translate(calc(-50% + ${state.mapPan.x}px), calc(-50% + ${state.mapPan.y}px))`;
-  const selfEl=document.getElementById("map-self-orb");
-  if(selfEl) selfEl.style.transform=`translate(calc(-50% + ${state.mapPan.x}px), calc(-50% + ${state.mapPan.y}px))`;
-}
-
-// Throttle: only update orb positions every 15 seconds max
-let lastOrbPositionSync=0;
-function syncOrbElements(forcePositions=false){
-  const layer=document.getElementById("map-orb-layer"); if(!layer)return;
-  const now=Date.now();
-  const shouldUpdatePositions=forcePositions||(now-lastOrbPositionSync>15000);
-
-  // Always sync presence (create / remove orbs)
-  const currentUids=new Set(state.nearbyUsers.map(u=>u.uid));
-  layer.querySelectorAll(".social-orb").forEach(el=>{
-    if(!currentUids.has(el.dataset.uid)){
-      el.style.opacity="0"; el.style.transform+=" scale(0.5)";
-      setTimeout(()=>el.remove(), 400);
+  if (S.markers[uid]) {
+    // ── UPDATE inner HTML only — marker stays on map ──
+    const el = S.markers[uid].getElement();
+    if (el) {
+      const inner   = el.querySelector('.bubble-ring');
+      const photoEl = el.querySelector('.bubble-inner');
+      const batEl   = el.querySelector('.bubble-battery');
+      const stEl    = el.querySelector('.bubble-status');
+      if (inner)   inner.className = `bubble-ring ${ring}`;
+      if (photoEl) photoEl.innerHTML = photo;
+      if (batEl)   batEl.outerHTML  = bat || '<span hidden></span>';
+      if (stEl)    stEl.textContent  = statusTxt;
     }
-  });
+    animateMarker(uid, lat, lng);
+  } else {
+    // ── CREATE once ──
+    const icon = L.divIcon({
+      className: `user-bubble${isSelf ? ' self' : ''}`,
+      html: `
+        <div class="bubble-ring ${ring}" style="position:relative">
+          <div class="bubble-inner">${photo}</div>
+          ${bat}
+        </div>
+        <div class="bubble-label">${escH(profile.displayName || 'User')}</div>
+        ${statusTxt ? `<div class="bubble-status">${escH(statusTxt)}</div>` : ''}`,
+      iconSize:   [70, 90],
+      iconAnchor: [35, 45],
+    });
+    const marker = L.marker([lat, lng], { icon, zIndexOffset: isSelf ? 1000 : 0 })
+      .addTo(S.map);
+    if (!isSelf) marker.on('click', e => { L.DomEvent.stopPropagation(e); openUserProfile(uid); });
+    S.markers[uid] = marker;
+    S.markerPositions[uid] = { lat, lng };
+    if (isSelf) S.selfMarker = marker;
+  }
+}
 
-  if(shouldUpdatePositions){
-    lastOrbPositionSync=now;
-    const m=getMapMetrics(); if(!m)return;
-    updateZoneRingSize();
+function removeMarker(uid) {
+  if (S.markers[uid]) { S.map.removeLayer(S.markers[uid]); delete S.markers[uid]; delete S.markerPositions[uid]; }
+}
 
-    state.nearbyUsers.forEach(user=>{
-      if(!user.location||!state.coords)return;
-      const angle=bearingTo(state.coords.lat,state.coords.lng,user.location.latitude,user.location.longitude);
-      const rad=angle*Math.PI/180;
-      const px=Math.sin(rad)*user.distance*m.ppm+state.mapPan.x;
-      const py=-Math.cos(rad)*user.distance*m.ppm+state.mapPan.y;
+function displayLoc(p) {
+  if (p.ghostMode && p.ghostLocation) return { lat: p.ghostLocation.lat, lng: p.ghostLocation.lng };
+  if (p.location)                      return { lat: p.location.lat,      lng: p.location.lng };
+  return { lat: null, lng: null };
+}
 
-      let orb=document.getElementById(`orb-${user.uid}`);
-      if(!orb){
-        orb=createOrbElement(user,layer);
-        // Animate in
-        orb.style.opacity="0"; orb.style.transform=`translate(calc(-50% + ${px}px), calc(-50% + ${py}px)) scale(0.5)`;
-        requestAnimationFrame(()=>{
-          orb.style.transition="transform 2s cubic-bezier(0.25,0.46,0.45,0.94), opacity 0.4s ease";
-          orb.style.opacity="1"; orb.style.transform=`translate(calc(-50% + ${px}px), calc(-50% + ${py}px))`;
-        });
-      } else {
-        orb.style.transform=`translate(calc(-50% + ${px}px), calc(-50% + ${py}px))`;
-        // Update live data
-        orb.style.setProperty("--oc",orbColor(user.mood));
-        const nameEl=orb.querySelector(".social-orb-name");
-        const pillEl=orb.querySelector(".social-orb-pill");
-        if(nameEl) nameEl.textContent=user.displayName;
-        if(pillEl) pillEl.textContent=`${user.distance}m · ${user.mood||"drifting"}`;
+function statusClass(p) {
+  if (!p.location) return 'idle';
+  const age = Date.now() - (p.location.updatedAt?.toMillis?.() || 0);
+  if (age > 5 * 60000) return 'idle';
+  return (p.speed || 0) > 1.5 ? 'moving' : 'online';
+}
+
+function statusText(p) {
+  if (p.ghostMode) return '👻 Ghost mode';
+  const z = zoneMatch(p);
+  if (z) return `📍 ${z}`;
+  const sp = p.speed || 0;
+  if (sp > 100) return '✈️ On a flight';
+  if (sp > 40)  return '🚗 In a vehicle';
+  if (sp > 2)   return '🚶 On the move';
+  const ts = p.location?.updatedAt?.toMillis?.();
+  if (!ts) return '';
+  const m = Math.round((Date.now() - ts) / 60000);
+  if (m < 2)  return 'Just now';
+  if (m < 60) return `${m}m ago`;
+  return `${Math.floor(m / 60)}h ago`;
+}
+
+function zoneMatch(p) {
+  if (!p.zones?.length || !p.location) return null;
+  for (const z of p.zones)
+    if (haversine(p.location.lat, p.location.lng, z.lat, z.lng) < 0.15) return z.name;
+  return null;
+}
+
+// ════════════════════════════════════════════════════════════
+//  GEOLOCATION
+// ════════════════════════════════════════════════════════════
+function initGeolocation() {
+  if (!navigator.geolocation) { showToast('Location unavailable.'); return; }
+  S.watchId = navigator.geolocation.watchPosition(onPos, () => {},
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
+}
+
+let _pLat = null, _pLng = null, _pTs = null;
+function onPos({ coords: { latitude: lat, longitude: lng, speed } }) {
+  const now = Date.now();
+  S.myLat = lat; S.myLng = lng;
+  // Speed from GPS or calculated from delta
+  if (speed != null) {
+    S.mySpeed = Math.round(speed * 3.6);
+  } else if (_pLat !== null) {
+    const dt = (now - _pTs) / 3600000;
+    S.mySpeed = dt > 0 ? Math.min(Math.round(haversine(_pLat, _pLng, lat, lng) / dt), 999) : 0;
+  }
+  _pLat = lat; _pLng = lng; _pTs = now;
+  upsertSelf();
+  if (now - S.lastLocationSent >= LOCATION_UPDATE_INTERVAL) {
+    pushLocation(lat, lng);
+    S.lastLocationSent = now;
+  }
+}
+
+async function pushLocation(lat, lng) {
+  if (!S.user) return;
+  const upd = {
+    'location.lat': lat, 'location.lng': lng,
+    'location.updatedAt': serverTimestamp(),
+    speed: S.mySpeed, battery: S.myBattery,
+    isCharging: S.myCharging, lastSeen: serverTimestamp(),
+    ghostMode: S.ghostMode,
+  };
+  if (!S.ghostMode) upd.ghostLocation = null;
+  if (S.ghostMode && !S.profile?.ghostLocation) upd.ghostLocation = { lat, lng };
+  await updateDoc(doc(db, 'users', S.user.uid), upd).catch(() => {});
+}
+
+function upsertSelf() {
+  if (S.myLat === null || !S.profile) return;
+  upsertMarker(S.user.uid, {
+    ...S.profile,
+    location: { lat: S.myLat, lng: S.myLng },
+    speed: S.mySpeed, battery: S.myBattery, ghostMode: S.ghostMode,
+  }, true);
+}
+
+// ════════════════════════════════════════════════════════════
+//  BATTERY
+// ════════════════════════════════════════════════════════════
+async function initBattery() {
+  if (!navigator.getBattery) return;
+  try {
+    const b = await navigator.getBattery();
+    const upd = () => { S.myBattery = Math.round(b.level * 100); S.myCharging = b.charging; };
+    upd();
+    b.addEventListener('levelchange', upd);
+    b.addEventListener('chargingchange', upd);
+  } catch (_) {}
+}
+
+// ════════════════════════════════════════════════════════════
+//  FIRESTORE — FRIENDS
+//  Single where clause only → no composite index needed
+// ════════════════════════════════════════════════════════════
+function listenFriends() {
+  const uid = S.user.uid;
+  // Only one where clause — filter 'accepted' client-side
+  const q = query(collection(db, 'friendships'),
+    where('participants', 'array-contains', uid));
+
+  const unsub = onSnapshot(q, async snap => {
+    const accepted = snap.docs
+      .map(d => d.data())
+      .filter(d => d.status === 'accepted'); // ← client-side filter
+
+    const friendUids = accepted.map(d => d.participants.find(p => p !== uid)).filter(Boolean);
+
+    // Fetch new friend profiles
+    await Promise.all(
+      friendUids.filter(f => !S.friends[f]).map(async f => {
+        const s = await getDoc(doc(db, 'users', f));
+        if (s.exists()) S.friends[f] = s.data();
+      })
+    );
+
+    // Remove unfriended
+    Object.keys(S.friends).forEach(f => {
+      if (!friendUids.includes(f)) {
+        delete S.friends[f];
+        if (S.mapMode === 'friends') removeMarker(f);
+        if (friendLocationUnsubs[f]) { friendLocationUnsubs[f](); delete friendLocationUnsubs[f]; }
       }
     });
-  }
-}
 
-function createOrbElement(user,layer){
-  const color=orbColor(user.mood);
-  const delay=(Math.random()*3).toFixed(2);
-  const dur=(3+Math.random()*2).toFixed(2);
-
-  const orb=document.createElement("div");
-  orb.className="social-orb";
-  orb.id=`orb-${user.uid}`;
-  orb.dataset.uid=user.uid;
-  orb.style.setProperty("--oc",color);
-  orb.style.setProperty("--fdelay",delay+"s");
-  orb.style.setProperty("--fdur",dur+"s");
-  orb.style.transition="transform 2s cubic-bezier(0.25,0.46,0.45,0.94), opacity 0.4s ease";
-
-  const photoHTML=user.photoURL
-    ?`<img class="social-orb-photo" src="${user.photoURL}" alt="" />`
-    :``;
-
-  orb.innerHTML=`
-    <div class="social-orb-float">
-      <div class="social-orb-pulse-ring"></div>
-      <div class="social-orb-avatar-wrap">
-        ${photoHTML}
-        ${!user.photoURL?nameInitial(user.displayName):""}
-        <div class="social-orb-online"></div>
-      </div>
-      <span class="social-orb-name">${user.displayName}</span>
-      <span class="social-orb-pill">${user.distance}m · ${user.mood||"drifting"}</span>
-    </div>`;
-
-  orb.addEventListener("click",()=>openProfileCard(user));
-  layer.appendChild(orb);
-  return orb;
-}
-
-// ── MAP CONTROLS ──────────────────────────────────
-function initMapControls(){
-  document.getElementById("zoom-in").addEventListener("click",()=>{
-    state.mapZoom=Math.min(state.mapZoom*1.35,5);
-    updateZoneRingSize(); syncOrbElements();
-  });
-  document.getElementById("zoom-out").addEventListener("click",()=>{
-    state.mapZoom=Math.max(state.mapZoom/1.35,0.3);
-    updateZoneRingSize(); syncOrbElements();
+    friendUids.forEach(listenFriendLocation);
+    renderFriendsList();
+    updateStatCounts();
+    if (S.mapMode === 'friends') refreshMapMarkers();
   });
 
-  const wrap=document.getElementById("map-wrap"); if(!wrap)return;
+  S.unsubs.push(unsub);
+}
 
-  // Touch pinch zoom + drag
-  let lastDist=null;
-  wrap.addEventListener("touchstart",e=>{
-    if(e.touches.length===2){
-      lastDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
-    }else if(e.touches.length===1){
-      state.mapDragging=true;
-      state.mapDragStart={x:e.touches[0].clientX,y:e.touches[0].clientY};
-      state.mapDragPanStart={...state.mapPan};
+const friendLocationUnsubs = {};
+function listenFriendLocation(fuid) {
+  if (friendLocationUnsubs[fuid]) return;
+  const unsub = onSnapshot(doc(db, 'users', fuid), snap => {
+    if (!snap.exists()) return;
+    const data = snap.data();
+    S.friends[fuid] = data;
+    if (S.mapMode === 'friends') {
+      if (data.location) upsertMarker(fuid, data);
+      else removeMarker(fuid);
     }
-  },{passive:true});
+    if (S.activeChatUid === fuid) updateChatHeader(data);
+    renderFriendsList();
+  });
+  friendLocationUnsubs[fuid] = unsub;
+  S.unsubs.push(unsub);
+}
 
-  wrap.addEventListener("touchmove",e=>{
-    if(e.touches.length===2&&lastDist){
-      const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
-      state.mapZoom=Math.max(.3,Math.min(5,state.mapZoom*(d/lastDist)));
-      lastDist=d; updateZoneRingSize(); syncOrbElements();
-    }else if(e.touches.length===1&&state.mapDragging){
-      state.mapPan={
-        x:state.mapDragPanStart.x+(e.touches[0].clientX-state.mapDragStart.x),
-        y:state.mapDragPanStart.y+(e.touches[0].clientY-state.mapDragStart.y),
-      };
-      updateZoneRingSize(); syncOrbElements();
+// ════════════════════════════════════════════════════════════
+//  EXPLORE — nearby users (client-side distance filter)
+// ════════════════════════════════════════════════════════════
+async function loadNearbyUsers() {
+  showToast('Loading nearby users…');
+  // No composite index — single field query only
+  const q = query(collection(db, 'users'), where('isPublic', '==', true));
+  const snap = await getDocs(q);
+  clearExploreMarkers();
+  const hasGPS = S.myLat !== null && S.myLng !== null;
+  snap.forEach(s => {
+    const d = s.data();
+    const uid = s.id; // use doc ID — more reliable than d.uid field
+    if (uid === S.user.uid || !d.location) return;
+    // If GPS available, filter by radius. If not, show everyone on Explore
+    if (hasGPS) {
+      const dist = haversine(S.myLat, S.myLng, d.location.lat, d.location.lng);
+      if (dist > EXPLORE_RADIUS_KM) return;
     }
-  },{passive:true});
-
-  wrap.addEventListener("touchend",e=>{
-    if(e.touches.length<2)lastDist=null;
-    if(e.touches.length===0)state.mapDragging=false;
+    d.uid = uid; // ensure uid field exists
+    S.nearbyUsers[uid] = d;
+    upsertMarker(uid, d);
   });
+  const count = Object.keys(S.nearbyUsers).length;
+  showToast(count > 0 ? `${count} people on Explore` : 'No public users found. Run seed.html first.');
+}
 
-  // Mouse drag
-  wrap.addEventListener("mousedown",e=>{
-    state.mapDragging=true;
-    state.mapDragStart={x:e.clientX,y:e.clientY};
-    state.mapDragPanStart={...state.mapPan};
-    wrap.style.cursor="grabbing";
+function clearExploreMarkers() {
+  Object.keys(S.nearbyUsers).forEach(uid => { if (!S.friends[uid]) removeMarker(uid); });
+  S.nearbyUsers = {};
+}
+
+function refreshMapMarkers() {
+  Object.entries(S.friends).forEach(([uid, p]) => {
+    if (p.location) upsertMarker(uid, p); else removeMarker(uid);
   });
-  wrap.addEventListener("mousemove",e=>{
-    if(!state.mapDragging)return;
-    state.mapPan={
-      x:state.mapDragPanStart.x+(e.clientX-state.mapDragStart.x),
-      y:state.mapDragPanStart.y+(e.clientY-state.mapDragStart.y),
-    };
-    updateZoneRingSize(); syncOrbElements();
+  upsertSelf();
+}
+
+// ════════════════════════════════════════════════════════════
+//  FRIEND REQUESTS
+//  Single where('to') — filter status client-side
+// ════════════════════════════════════════════════════════════
+function listenFriendRequests() {
+  const uid = S.user.uid;
+  // Only filter by 'to' — no composite index
+  const q = query(collection(db, 'friendships'), where('to', '==', uid));
+  const unsub = onSnapshot(q, snap => {
+    S.friendRequests = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(d => d.status === 'pending'); // ← client-side
+    renderFriendRequests();
+    const count = S.friendRequests.length;
+    const badge = $('requests-badge');
+    badge.hidden = count === 0;
+    badge.textContent = count;
   });
-  wrap.addEventListener("mouseup",()=>{state.mapDragging=false;wrap.style.cursor="grab";});
-  wrap.addEventListener("mouseleave",()=>{state.mapDragging=false;wrap.style.cursor="grab";});
-  wrap.addEventListener("wheel",e=>{
-    e.preventDefault();
-    state.mapZoom=Math.max(.3,Math.min(5,state.mapZoom*(e.deltaY<0?1.12:0.89)));
-    updateZoneRingSize(); syncOrbElements();
-  },{passive:false});
-
-  wrap.style.cursor="grab";
+  S.unsubs.push(unsub);
 }
 
-// ── NEARBY STRIP ──────────────────────────────────
-function renderNearbyStrip(users){
-  const container=document.getElementById("nearby-strip-inner"); if(!container)return;
-  container.innerHTML="";
-  users.slice(0,12).forEach(user=>{
-    const color=orbColor(user.mood);
-    const chip=document.createElement("div"); chip.className="nearby-chip";
-    chip.innerHTML=`<div class="nearby-chip-orb" style="background:${color}">${nameInitial(user.displayName)}</div>
-      <div class="nearby-chip-info"><span class="nearby-chip-name">${user.displayName}</span><span class="nearby-chip-dist">${user.distance}m away</span></div>`;
-    chip.addEventListener("click",()=>openProfileCard(user));
-    container.appendChild(chip);
+async function sendFriendRequest(email) {
+  email = email.trim().toLowerCase();
+  if (email === S.user.email?.toLowerCase()) return 'You cannot add yourself.';
+  const snap = await getDocs(query(collection(db, 'users'), where('email', '==', email)));
+  if (snap.empty) return 'No user found with that email.';
+  const targetUid = snap.docs[0].id;
+
+  // Check existing — single where only
+  const ex = await getDocs(query(collection(db, 'friendships'),
+    where('participants', 'array-contains', S.user.uid)));
+  if (ex.docs.some(d => d.data().participants.includes(targetUid)))
+    return 'Already friends or request already sent.';
+
+  await addDoc(collection(db, 'friendships'), {
+    participants: [S.user.uid, targetUid],
+    from: S.user.uid, to: targetUid,
+    status: 'pending', createdAt: serverTimestamp(),
   });
+  return null;
 }
 
-// ── MOOD ──────────────────────────────────────────
-function initMoodPicker(){
-  const btn=document.getElementById("btn-mood"),picker=document.getElementById("mood-picker");
-  btn.addEventListener("click",()=>picker.classList.toggle("hidden"));
-  document.querySelectorAll(".mood-btn").forEach(b=>{
-    b.addEventListener("click",()=>{
-      setMood(b.dataset.mood); picker.classList.add("hidden");
-      document.querySelectorAll(".mood-btn").forEach(x=>x.classList.remove("active"));
-      b.classList.add("active");
-    });
-  });
-  document.getElementById("mood-clear").addEventListener("click",()=>{
-    setMood(null); picker.classList.add("hidden");
-    document.querySelectorAll(".mood-btn").forEach(x=>x.classList.remove("active"));
-  });
-}
+async function acceptRequest(id) { await updateDoc(doc(db, 'friendships', id), { status: 'accepted' }); }
+async function rejectRequest(id) { await deleteDoc(doc(db, 'friendships', id)); }
 
-function setMood(mood){
-  state.currentMood=mood; if(state.user)state.user.mood=mood;
-  if(state.uid) db.collection("users").doc(state.uid).update({mood}).catch(()=>{});
-  const d=document.getElementById("profile-mood-display");
-  const labels={open:"Open",chill:"Chill",lost:"Lost",bored:"Bored",curious:"Curious",observe:"Observing"};
-  if(d){d.textContent=mood?labels[mood]||mood:"No mood set"; d.style.color=mood?orbColor(mood):"";}
-  const selfOrb=document.getElementById("map-self-orb");
-  if(selfOrb) selfOrb.style.setProperty("--self-color",orbColor(mood));
-  showToast(mood?`Vibe set to ${mood}`:"Mood cleared",mood?"success":"info");
-}
+// ════════════════════════════════════════════════════════════
+//  CONVERSATIONS
+//  Single where — sort client-side, no composite index
+// ════════════════════════════════════════════════════════════
+function listenConversations() {
+  // No orderBy — sort in JS to avoid composite index
+  const q = query(collection(db, 'conversations'),
+    where('participants', 'array-contains', S.user.uid));
 
-// ── ANCHOR ────────────────────────────────────────
-function initAnchorMode(){
-  document.getElementById("btn-anchor").addEventListener("click",()=>state.anchorMode?disableAnchor():enableAnchor());
-}
-function enableAnchor(){
-  state.anchorMode=true;
-  document.getElementById("anchor-banner").classList.remove("hidden");
-  document.getElementById("btn-anchor").classList.add("active");
-  if(state.uid) db.collection("users").doc(state.uid).update({anchorMode:true}).catch(()=>{});
-  showToast("Anchor mode active","success");
-}
-function disableAnchor(){
-  state.anchorMode=false;
-  document.getElementById("anchor-banner").classList.add("hidden");
-  document.getElementById("btn-anchor").classList.remove("active");
-  if(state.uid) db.collection("users").doc(state.uid).update({anchorMode:false}).catch(()=>{});
-}
-
-// ── CROWD ─────────────────────────────────────────
-function checkCrowdMode(users){
-  const n=users.filter(u=>u.distance<=CROWD_RADIUS).length;
-  const badge=document.getElementById("crowd-count-badge"); if(badge)badge.textContent=`${n+1} here`;
-  document.getElementById("btn-crowd")?.classList.toggle("active",n>=CROWD_THRESHOLD);
-}
-
-let crowdUnsub=null;
-function initCrowdView(){
-  document.getElementById("btn-crowd").addEventListener("click",()=>showView("crowd"));
-  if(!state.coords)return;
-  const n=state.nearbyUsers.filter(u=>u.distance<=CROWD_RADIUS).length+1;
-  const status=document.getElementById("crowd-status-text");
-  if(n<CROWD_THRESHOLD){if(status)status.textContent=`${n} / ${CROWD_THRESHOLD} needed to unlock Crowd Mode`;return;}
-  if(status)status.textContent=`${n} people are here with you`;
-  subscribeCrowdMessages();
-}
-
-function subscribeCrowdMessages(){
-  if(crowdUnsub)crowdUnsub();
-  if(!state.coords)return;
-  const roomId=crowdRoomId(state.coords.lat,state.coords.lng);
-  const el=document.getElementById("crowd-messages"); if(!el)return;
-  el.innerHTML="";
-  crowdUnsub=db.collection("crowdRooms").doc(roomId).collection("messages")
-    .orderBy("createdAt","asc").limit(80)
-    .onSnapshot(snap=>{
-      const msgs=[]; snap.forEach(d=>msgs.push({id:d.id,...d.data()}));
-      renderCrowdMessages(msgs);
-    });
-  state.unsubscribers.push(()=>{if(crowdUnsub)crowdUnsub();});
-}
-
-function crowdRoomId(lat,lng){
-  const la=(Math.floor(lat*50)/50).toFixed(2).replace(".","_").replace("-","n");
-  const lo=(Math.floor(lng*50)/50).toFixed(2).replace(".","_").replace("-","n");
-  return`${la}__${lo}`;
-}
-
-function renderCrowdMessages(msgs){
-  const el=document.getElementById("crowd-messages"); if(!el)return;
-  if(!msgs.length){el.innerHTML=`<div class="empty-state"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><p>Crowd channel is quiet</p><span>Be the first to say something</span></div>`;return;}
-  el.innerHTML="";
-  msgs.forEach(msg=>{
-    const mine=msg.uid===state.uid; const color=orbColor(msg.mood);
-    const div=document.createElement("div"); div.className=`crowd-msg${mine?" mine":""}`;
-    div.innerHTML=`<div class="crowd-msg-orb" style="background:${color}">${nameInitial(msg.displayName)}</div>
-      <div class="crowd-msg-body">${!mine?`<div class="crowd-msg-name">${msg.displayName}</div>`:""}
-      <div class="crowd-msg-text">${escapeHtml(msg.text)}</div></div>`;
-    el.appendChild(div);
-  });
-  el.scrollTop=el.scrollHeight;
-}
-
-function initCrowdInput(){
-  const send=async()=>{
-    const inp=document.getElementById("crowd-input"); const text=inp.value.trim();
-    if(!text||!state.coords||!state.uid)return;
-    const roomId=crowdRoomId(state.coords.lat,state.coords.lng);
-    inp.value="";
-    await db.collection("crowdRooms").doc(roomId).collection("messages").add({
-      uid:state.uid,displayName:state.user?.displayName||"Anonymous",mood:state.user?.mood||null,text,
-      createdAt:firebase.firestore.FieldValue.serverTimestamp(),
-    });
-    await db.collection("crowdRooms").doc(roomId).set({lastActivity:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});
-  };
-  document.getElementById("btn-crowd-send")?.addEventListener("click",send);
-  document.getElementById("crowd-input")?.addEventListener("keydown",e=>{if(e.key==="Enter")send();});
-}
-
-// ── PROFILE CARD ──────────────────────────────────
-function openProfileCard(user){
-  state.currentProfileCard=user;
-  const color=orbColor(user.mood);
-  const moodLabels={open:"Open",chill:"Chill",lost:"Lost",bored:"Bored",curious:"Curious",observe:"Observing"};
-  document.getElementById("pc-orb").style.background=color;
-  document.getElementById("pc-orb").textContent=nameInitial(user.displayName);
-  document.getElementById("pc-name").textContent=user.displayName;
-  document.getElementById("pc-bio").textContent=user.bio||"No bio yet";
-  document.getElementById("pc-distance").textContent=`${user.distance}m away`;
-  document.getElementById("pc-time-in-zone").textContent="in zone";
-  document.getElementById("pc-mood-label").textContent=user.mood?moodLabels[user.mood]:"No mood";
-  document.getElementById("btn-pc-message").onclick=()=>{closeProfileCard();openThread(user);};
-  const modal=document.getElementById("modal-profile-card");
-  modal.classList.remove("hidden"); modal.classList.add("open");
-}
-function closeProfileCard(){
-  const modal=document.getElementById("modal-profile-card");
-  modal.classList.add("hidden"); modal.classList.remove("open");
-  state.currentProfileCard=null;
-}
-
-// ── MESSAGING ─────────────────────────────────────
-function subscribeToThreads(){
-  if(!state.uid)return;
-  const unsub=db.collection("threads").where("participants","array-contains",state.uid)
-    .orderBy("updatedAt","desc").limit(40)
-    .onSnapshot(snap=>{
-      const threads=[],ghosts=[];
-      snap.forEach(doc=>{const t={id:doc.id,...doc.data()}; t.isGhost?ghosts.push(t):threads.push(t);});
-      state.threads=threads; state.ghosts=ghosts;
-      updateInboxBadge();
-      if(state.currentView==="inbox")renderInbox();
-    },()=>{});
-  state.unsubscribers.push(unsub);
-}
-
-function updateInboxBadge(){
-  const unread=state.threads.reduce((acc,t)=>acc+((t.unreadCounts?.[state.uid]||0)>0?1:0),0);
-  const badge=document.getElementById("inbox-badge"); if(!badge)return;
-  unread>0?(badge.textContent=unread,badge.classList.remove("hidden")):badge.classList.add("hidden");
-}
-
-async function openThread(user){
-  const ids=[state.uid,user.uid].sort(); const threadId=ids.join("__");
-  const ref=db.collection("threads").doc(threadId);
-  const snap=await ref.get();
-  if(!snap.exists){
-    await ref.set({
-      id:threadId, participants:ids,
-      participantData:{
-        [state.uid]:{displayName:state.user?.displayName,mood:state.user?.mood||null},
-        [user.uid]:{displayName:user.displayName,mood:user.mood||null},
-      },
-      isGhost:false, createdAt:firebase.firestore.FieldValue.serverTimestamp(),
-      updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
-      lastMessage:null, unreadCounts:{[state.uid]:0,[user.uid]:0},
-    });
-    db.collection("users").doc(state.uid).update({totalConvos:firebase.firestore.FieldValue.increment(1)}).catch(()=>{});
-  }
-  state.currentThread={id:threadId,otherUser:user};
-  renderThreadModal(user,threadId);
-}
-
-function renderThreadModal(user,threadId){
-  const color=orbColor(user.mood);
-  document.getElementById("thread-orb").style.background=color;
-  document.getElementById("thread-orb").textContent=nameInitial(user.displayName);
-  document.getElementById("thread-user-name").textContent=user.displayName;
-  const isNearby=state.nearbyUsers.some(u=>u.uid===user.uid);
-  const statusEl=document.getElementById("thread-status");
-  statusEl.textContent=isNearby?"in zone":"left zone";
-  statusEl.className="thread-status"+(isNearby?"":" ghost");
-  const ghostNote=document.getElementById("thread-ghost-note");
-  ghostNote.classList.toggle("hidden",isNearby);
-  const inputBar=document.getElementById("thread-input-bar");
-  inputBar.style.opacity=isNearby?"1":"0.5";
-  document.getElementById("thread-input").disabled=!isNearby;
-  const msgsEl=document.getElementById("thread-messages"); msgsEl.innerHTML="";
-  if(!isNearby) msgsEl.appendChild(ghostNote.cloneNode(true));
-  const unsub=db.collection("threads").doc(threadId).collection("messages")
-    .orderBy("createdAt","asc").limit(100)
-    .onSnapshot(snap=>{
-      const msgs=[]; snap.forEach(d=>msgs.push({id:d.id,...d.data()}));
-      renderMessages(msgs,msgsEl,isNearby);
-    });
-  db.collection("threads").doc(threadId).update({[`unreadCounts.${state.uid}`]:0}).catch(()=>{});
-  const modal=document.getElementById("modal-thread");
-  modal.classList.remove("hidden"); modal.classList.add("open");
-  modal._msgUnsub=unsub;
-}
-
-function renderMessages(msgs,container,isInZone){
-  const atBottom=container.scrollHeight-container.scrollTop-container.clientHeight<60;
-  const note=container.querySelector(".thread-ghost-note"); container.innerHTML="";
-  if(note)container.appendChild(note);
-  msgs.forEach(msg=>{
-    const mine=msg.senderUid===state.uid;
-    const div=document.createElement("div");
-    div.className=`msg-bubble ${mine?"mine":"theirs"}${!isInZone?" ghost-msg":""}`;
-    div.innerHTML=`<div class="msg-text">${escapeHtml(msg.text)}</div>
-      <span class="msg-time">${formatRelativeTime(msg.createdAt)}</span>`;
-    container.appendChild(div);
-  });
-  if(atBottom)container.scrollTop=container.scrollHeight;
-}
-
-function initThreadInput(){
-  const send=async()=>{
-    const inp=document.getElementById("thread-input"); const text=inp.value.trim();
-    if(!text||!state.currentThread||!state.uid)return;
-    const{id:threadId,otherUser}=state.currentThread;
-    const isNearby=state.nearbyUsers.some(u=>u.uid===otherUser.uid);
-    if(!isNearby){showToast("They've left your zone","ghost");return;}
-    inp.value="";
-    await db.collection("threads").doc(threadId).collection("messages").add({
-      senderUid:state.uid,senderName:state.user?.displayName||"Anonymous",text,
-      createdAt:firebase.firestore.FieldValue.serverTimestamp(),
-    });
-    await db.collection("threads").doc(threadId).update({
-      lastMessage:text, updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
-      [`unreadCounts.${otherUser.uid}`]:firebase.firestore.FieldValue.increment(1),
-    });
-  };
-  document.getElementById("btn-thread-send")?.addEventListener("click",send);
-  document.getElementById("thread-input")?.addEventListener("keydown",e=>{if(e.key==="Enter")send();});
-}
-
-function closeThread(){
-  const modal=document.getElementById("modal-thread");
-  if(modal._msgUnsub){modal._msgUnsub();modal._msgUnsub=null;}
-  modal.classList.add("hidden"); modal.classList.remove("open");
-  state.currentThread=null;
-}
-
-function checkGhostReactivation(){
-  state.ghosts.forEach(ghost=>{
-    const otherUid=ghost.participants?.find(id=>id!==state.uid);
-    if(state.nearbyUsers.some(u=>u.uid===otherUid)){
-      db.collection("threads").doc(ghost.id).update({isGhost:false}).catch(()=>{});
-      showToast("A ghost returned to your zone","ghost");
-    }
-  });
-}
-
-// ── INBOX ─────────────────────────────────────────
-function initInboxTabs(){
-  document.querySelectorAll(".inbox-tab").forEach(tab=>{
-    tab.addEventListener("click",()=>{
-      document.querySelectorAll(".inbox-tab").forEach(t=>t.classList.remove("active"));
-      document.querySelectorAll(".inbox-panel").forEach(p=>p.classList.remove("active"));
-      tab.classList.add("active");
-      document.getElementById(`inbox-${tab.dataset.itab}`)?.classList.add("active");
-    });
-  });
-}
-
-function renderInbox(){
-  renderThreadList(state.threads,"thread-list",false);
-  renderThreadList(state.ghosts,"ghost-list",true);
-}
-
-function renderThreadList(threads,containerId,isGhost){
-  const el=document.getElementById(containerId); if(!el)return;
-  if(!threads.length){
-    el.innerHTML=isGhost
-      ?`<div class="empty-state"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 10h.01M15 10h.01M12 2a7 7 0 0 1 7 7v8l-2-2-2 2-2-2-2 2-2-2-2 2V9a7 7 0 0 1 7-7z"/></svg></div><p>No ghost messages yet</p><span>Miss a reply and see them here</span></div>`
-      :`<div class="empty-state"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><p>No active threads yet</p><span>Tap an orb on the map to start talking</span></div>`;
-    return;
-  }
-  el.innerHTML="";
-  threads.forEach(thread=>{
-    const otherUid=thread.participants?.find(id=>id!==state.uid);
-    const od=thread.participantData?.[otherUid]||{};
-    const color=orbColor(od.mood); const unread=thread.unreadCounts?.[state.uid]||0;
-    const item=document.createElement("div"); item.className="thread-item";
-    item.innerHTML=`<div class="thread-orb-sm${isGhost?" ghost-orb":""}" style="background:${color};color:${color}">${nameInitial(od.displayName||"?")}</div>
-      <div class="thread-body"><div class="thread-name">${od.displayName||"Anonymous"}</div>
-      <div class="thread-preview${isGhost?" ghost-text":""}">${isGhost?"Left the zone before you replied":escapeHtml(thread.lastMessage||"Start the conversation")}</div></div>
-      <div class="thread-meta"><span class="thread-time">${formatRelativeTime(thread.updatedAt)}</span>
-      ${unread>0&&!isGhost?`<span class="thread-unread">${unread}</span>`:""}
-      ${isGhost?`<span class="thread-ghost-badge">Ghost</span>`:""}</div>`;
-    item.addEventListener("click",()=>{
-      const nearby=state.nearbyUsers.find(u=>u.uid===otherUid)||{uid:otherUid,...od,distance:0};
-      openThread(nearby);
-    });
-    el.appendChild(item);
-  });
-}
-
-// ══════════════════════════════════════════════════
-//  POSTS — SWIPE CARDS
-// ══════════════════════════════════════════════════
-let postsUnsub=null;
-
-function initPostsPage(){
-  document.getElementById("btn-create-post")?.addEventListener("click",openCreatePost);
-  document.getElementById("btn-post-like")?.addEventListener("click",()=>swipePost("like"));
-  document.getElementById("btn-post-skip")?.addEventListener("click",()=>swipePost("skip"));
-  document.getElementById("btn-post-msg")?.addEventListener("click",()=>{
-    const post=state.postQueue[state.currentPostIndex];
-    if(!post)return;
-    const user={uid:post.uid,displayName:post.displayName,mood:post.mood,distance:post.distance||0};
-    openThread(user);
-  });
-  initCreatePostModal();
-}
-
-function renderPostsPage(){
-  loadPosts();
-}
-
-function loadPosts(){
-  if(postsUnsub)postsUnsub();
-  if(!state.coords){setTimeout(loadPosts,2000);return;}
-
-  const cutoff=new Date(Date.now()-24*3600*1000);
-  postsUnsub=db.collection("posts").where("createdAt",">",cutoff)
-    .orderBy("createdAt","desc").limit(60)
-    .onSnapshot(snap=>{
-      const posts=[];
-      const seenKey=`drift_seen_${state.uid}`;
-      const seen=JSON.parse(localStorage.getItem(seenKey)||"[]");
-      snap.forEach(doc=>{
-        const p={id:doc.id,...doc.data()};
-        if(p.uid===state.uid)return;
-        if(seen.includes(p.id))return;
-        if(!p.location)return;
-        const dist=haversineDistance(state.coords.lat,state.coords.lng,p.location.latitude,p.location.longitude);
-        if(dist<=state.zoneRadius*3) posts.push({...p,distance:Math.round(dist)});
+  const unsub = onSnapshot(q, snap => {
+    // Sort by lastMessageAt descending — client-side
+    const convs = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => {
+        const ta = a.lastMessageAt?.toMillis?.() || 0;
+        const tb = b.lastMessageAt?.toMillis?.() || 0;
+        return tb - ta;
       });
-      posts.sort((a,b)=>a.distance-b.distance);
-      state.postQueue=posts;
-      state.currentPostIndex=0;
-      renderCurrentPost();
-    },()=>{});
-  state.unsubscribers.push(()=>{if(postsUnsub)postsUnsub();});
+
+    renderConversations(convs);
+
+    // Unread count
+    const unread = convs.filter(c => !c.readBy?.includes(S.user.uid)).length;
+    const badge = $('unread-badge');
+    badge.hidden = unread === 0;
+    badge.textContent = unread;
+  });
+
+  if (S.convUnsub) S.convUnsub();
+  S.convUnsub = unsub;
 }
 
-function renderCurrentPost(){
-  const stack=document.getElementById("posts-stack"); if(!stack)return;
-  stack.querySelectorAll(".post-tiktok").forEach(c=>c.remove());
-
-  const emptyEl=document.getElementById("posts-empty");
-  const actionsEl=document.getElementById("posts-actions");
-  const remaining=state.postQueue.slice(state.currentPostIndex);
-
-  if(!remaining.length){
-    emptyEl?.classList.remove("hidden");
-    if(actionsEl)actionsEl.style.visibility="hidden";
-    return;
-  }
-  emptyEl?.classList.add("hidden");
-  if(actionsEl)actionsEl.style.visibility="visible";
-
-  // Only render the top card (full-screen, TikTok style)
-  const post=remaining[0];
-  const card=buildPostCard(post);
-  card.style.zIndex="10";
-  attachSwipeListeners(card,post);
-  stack.insertBefore(card,stack.querySelector(".swipe-label"));
+async function getOrCreateConv(otherUid) {
+  const q = query(collection(db, 'conversations'),
+    where('participants', 'array-contains', S.user.uid));
+  const snap = await getDocs(q);
+  const existing = snap.docs.find(d => d.data().participants.includes(otherUid));
+  if (existing) return existing.id;
+  const ref = await addDoc(collection(db, 'conversations'), {
+    participants: [S.user.uid, otherUid],
+    lastMessage: '', lastMessageAt: serverTimestamp(), readBy: [S.user.uid],
+  });
+  return ref.id;
 }
 
-function buildPostCard(post){
-  const color=orbColor(post.mood);
-  const moodGradients={
-    open:   {hi:"rgba(249,115,22,0.55)",  lo:"rgba(239,68,68,0.25)"},
-    chill:  {hi:"rgba(6,182,212,0.55)",   lo:"rgba(59,130,246,0.25)"},
-    lost:   {hi:"rgba(168,85,247,0.55)",  lo:"rgba(139,92,246,0.25)"},
-    bored:  {hi:"rgba(234,179,8,0.55)",   lo:"rgba(249,115,22,0.2)"},
-    curious:{hi:"rgba(34,197,94,0.55)",   lo:"rgba(6,182,212,0.2)"},
-    observe:{hi:"rgba(100,116,139,0.4)",  lo:"rgba(71,85,105,0.2)"},
-  };
-  const grad=moodGradients[post.mood]||{hi:"rgba(139,92,246,0.5)",lo:"rgba(6,182,212,0.2)"};
+function openChat(uid) {
+  const profile = S.friends[uid] || S.nearbyUsers[uid];
+  if (!profile) return;
+  S.activeChatUid = uid;
+  updateChatHeader(profile);
+  markRead(uid);
+  loadMessages(uid);
+  openPanel('chat');
+}
 
-  const card=document.createElement("div");
-  card.className="post-tiktok";
-  card.dataset.postId=post.id;
+function updateChatHeader(p) {
+  setAvatar('chat-avatar-initial', 'chat-avatar-img', p);
+  $('chat-name').textContent        = p.displayName || 'User';
+  $('chat-status-text').textContent = statusText(p);
+}
 
-  // Background
-  let bgHTML="";
-  if(post.mediaURL&&post.mediaType==="video"){
-    bgHTML=`<div class="ptk-bg"><video class="ptk-bg-video" src="${post.mediaURL}" playsinline loop muted autoplay></video></div>`;
-  }else if(post.mediaURL){
-    bgHTML=`<div class="ptk-bg"><img class="ptk-bg-img" src="${post.mediaURL}" alt="" loading="lazy" /></div>`;
-  }else{
-    bgHTML=`<div class="ptk-bg"><div class="ptk-bg-gradient" style="--gc-hi:${grad.hi};--gc-lo:${grad.lo}"></div></div>`;
+async function markRead(otherUid) {
+  const id = await getOrCreateConv(otherUid);
+  updateDoc(doc(db, 'conversations', id), { readBy: [S.user.uid] }).catch(() => {});
+}
+
+function loadMessages(otherUid) {
+  if (S.chatUnsub) S.chatUnsub();
+  const chatEl = $('chat-messages');
+  chatEl.innerHTML = '';
+
+  getOrCreateConv(otherUid).then(convId => {
+    // Single orderBy on one field — no composite index
+    const q = query(collection(db, 'conversations', convId, 'messages'),
+      orderBy('createdAt', 'asc'), limit(200));
+
+    S.chatUnsub = onSnapshot(q, snap => {
+      chatEl.innerHTML = '';
+      let lastDate = null;
+      snap.docs.forEach(d => {
+        const msg = d.data();
+        const dt  = msg.createdAt?.toDate?.();
+        if (dt) {
+          const ds = dt.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+          if (ds !== lastDate) {
+            const div = document.createElement('div');
+            div.className = 'chat-date-divider';
+            div.textContent = ds;
+            chatEl.appendChild(div);
+            lastDate = ds;
+          }
+        }
+        appendMsg(msg);
+      });
+      chatEl.scrollTop = chatEl.scrollHeight;
+    });
+  });
+}
+
+function appendMsg(msg) {
+  const mine = msg.senderId === S.user.uid;
+  const div  = document.createElement('div');
+  div.className = `msg ${mine ? 'out' : 'in'}`;
+  const time = msg.createdAt?.toDate?.()?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '';
+  div.innerHTML  = `<div class="msg-bubble">${escH(msg.text)}</div>`;
+  if (time) {
+    const t = document.createElement('div');
+    t.className = 'msg-time';
+    t.textContent = time;
+    div.appendChild(t);
   }
+  $('chat-messages').appendChild(div);
+}
 
-  // Like count
-  const likes=post.likes||0;
-  const photoHTML=post.photoURL?`<img src="${post.photoURL}" alt="" />`:"";
+async function sendMessage() {
+  const input = $('chat-input');
+  const text  = input.value.trim();
+  if (!text || !S.activeChatUid) return;
+  input.value = '';
 
-  card.innerHTML=`
-    ${bgHTML}
-    <div class="ptk-scrim-top"></div>
-    <div class="ptk-scrim"></div>
-    <div class="ptk-content">
-      <div class="ptk-left">
-        <div class="ptk-user-row">
-          <div class="ptk-avatar" style="background:${color};color:#fff">${photoHTML}${!post.photoURL?nameInitial(post.displayName):""}</div>
-          <div class="ptk-user-info">
-            <div class="ptk-username">${post.displayName}</div>
-            <div class="ptk-meta">${post.distance}m away · ${formatRelativeTime(post.createdAt)}</div>
-          </div>
-          <button class="ptk-wave-btn" data-uid="${post.uid}">+ wave</button>
-        </div>
-        ${post.text?`<p class="ptk-caption">${escapeHtml(post.text)}</p>`:""}
-        <div class="ptk-zone-chip">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="10" r="3"/><path d="M12 2C8.1 2 5 5.1 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.9-3.1-7-7-7z"/></svg>
-          within 500m
-        </div>
+  // Optimistic UI
+  appendMsg({ text, senderId: S.user.uid, createdAt: Timestamp.now() });
+  $('chat-messages').scrollTop = $('chat-messages').scrollHeight;
+
+  const convId = await getOrCreateConv(S.activeChatUid);
+  await Promise.all([
+    addDoc(collection(db, 'conversations', convId, 'messages'),
+      { text, senderId: S.user.uid, createdAt: serverTimestamp() }),
+    updateDoc(doc(db, 'conversations', convId),
+      { lastMessage: text, lastMessageAt: serverTimestamp(), readBy: [S.user.uid] }),
+  ]);
+}
+
+// ════════════════════════════════════════════════════════════
+//  PROFILE
+// ════════════════════════════════════════════════════════════
+function updateProfileUI() {
+  if (!S.profile) return;
+  const p = S.profile;
+  $('profile-name').textContent  = p.displayName || '';
+  $('profile-email').textContent = p.email || S.user.email || '';
+  $('settings-name').value       = p.displayName || '';
+  $('public-toggle').checked     = !!p.isPublic;
+  $('ghost-toggle').checked      = !!p.ghostMode;
+  S.ghostMode                    = !!p.ghostMode;
+  setAvatar('profile-avatar-initial', 'profile-avatar-img', p);
+  setAvatar('top-avatar-initial',     'top-avatar-img',     p);
+  renderZones();
+  updateStatCounts();
+}
+
+function setAvatar(initId, imgId, p) {
+  const ini = $(initId), img = $(imgId);
+  if (!ini || !img) return;
+  if (p?.photoURL) { img.src = p.photoURL; img.hidden = false; ini.textContent = ''; }
+  else             { img.hidden = true; img.src = ''; ini.textContent = (p?.displayName || '?')[0].toUpperCase(); }
+}
+
+function updateStatCounts() {
+  $('stat-friends').textContent = Object.keys(S.friends).length;
+  $('stat-zones').textContent   = S.profile?.zones?.length || 0;
+}
+
+async function uploadPhoto(file) {
+  showToast('Uploading…');
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('upload_preset', CLOUDINARY_CONFIG.uploadPreset);
+  fd.append('folder', 'orbit/avatars');
+  try {
+    const res  = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CONFIG.cloudName}/image/upload`, { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!data.secure_url) throw new Error();
+    await Promise.all([
+      updateProfile(auth.currentUser, { photoURL: data.secure_url }),
+      updateDoc(doc(db, 'users', S.user.uid), { photoURL: data.secure_url }),
+    ]);
+    S.profile.photoURL = data.secure_url;
+    updateProfileUI(); upsertSelf();
+    showToast('Photo updated!');
+  } catch { showToast('Upload failed. Check Cloudinary preset.'); }
+}
+
+function renderZones() {
+  const el    = $('zones-list');
+  const zones = S.profile?.zones || [];
+  $('stat-zones').textContent = zones.length;
+  el.innerHTML = zones.length === 0
+    ? '<p style="font-size:13px;color:var(--text2);padding:4px 0">No zones saved yet.</p>'
+    : zones.map((z, i) => `
+        <div class="zone-item">
+          <span>📍 ${escH(z.name)}</span>
+          <button class="zone-delete" data-i="${i}" aria-label="Delete">×</button>
+        </div>`).join('');
+  el.querySelectorAll('.zone-delete').forEach(b =>
+    b.addEventListener('click', () => deleteZone(+b.dataset.i)));
+}
+
+async function addZone(name) {
+  if (S.myLat === null) { showToast('Location not available.'); return; }
+  const zones = [...(S.profile?.zones || []), { name, lat: S.myLat, lng: S.myLng }];
+  await updateDoc(doc(db, 'users', S.user.uid), { zones });
+  S.profile.zones = zones; renderZones();
+  showToast(`Zone "${name}" saved!`);
+}
+
+async function deleteZone(i) {
+  const zones = [...(S.profile?.zones || [])];
+  zones.splice(i, 1);
+  await updateDoc(doc(db, 'users', S.user.uid), { zones });
+  S.profile.zones = zones; renderZones();
+}
+
+// ════════════════════════════════════════════════════════════
+//  RENDER — Friends list
+// ════════════════════════════════════════════════════════════
+function renderFriendsList() {
+  const list  = $('friends-list');
+  const empty = $('friends-empty');
+  const entries = Object.entries(S.friends);
+  empty.hidden = entries.length > 0;
+  list.innerHTML = entries.map(([uid, p]) => {
+    const sc = statusClass(p);
+    const dc = sc === 'online' ? 'green' : sc === 'moving' ? 'blue' : '';
+    return `<div class="user-row" data-uid="${uid}">
+      ${avatarHTML('size-sm', p)}
+      <div class="user-row-info">
+        <div class="user-row-name">${escH(p.displayName || 'User')}</div>
+        <div class="user-row-sub">${escH(statusText(p))}</div>
       </div>
-      <div class="ptk-rail">
-        <div class="ptk-action like-action" id="ptk-like-${post.id}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
-          <span>${likes}</span>
-        </div>
-        <div class="ptk-action msg-action" data-uid="${post.uid}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          <span>DM</span>
-        </div>
-        <div class="ptk-action skip-action">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          <span>skip</span>
-        </div>
+      <div class="online-dot ${dc}"></div>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('.user-row').forEach(r =>
+    r.addEventListener('click', () => openUserProfile(r.dataset.uid)));
+}
+
+function renderFriendRequests() {
+  const section = $('friend-requests-section');
+  const list    = $('friend-requests-list');
+  section.hidden = S.friendRequests.length === 0;
+  list.innerHTML = S.friendRequests.map(req => `
+    <div class="user-row">
+      <div class="user-row-info">
+        <div class="user-row-name">Friend Request</div>
+        <div class="user-row-sub">${escH(req.from)}</div>
+      </div>
+      <div class="row-actions">
+        <button class="accept-btn" data-id="${req.id}">Accept</button>
+        <button class="reject-btn" data-id="${req.id}">Decline</button>
+      </div>
+    </div>`).join('');
+  list.querySelectorAll('.accept-btn').forEach(b => b.addEventListener('click', () => acceptRequest(b.dataset.id)));
+  list.querySelectorAll('.reject-btn').forEach(b => b.addEventListener('click', () => rejectRequest(b.dataset.id)));
+}
+
+async function renderConversations(convs) {
+  const list  = $('conversations-list');
+  const empty = $('messages-empty');
+  empty.hidden = convs.length > 0;
+  if (!convs.length) { list.innerHTML = ''; return; }
+
+  const items = await Promise.all(convs.map(async c => {
+    const ouid = c.participants.find(p => p !== S.user.uid);
+    let p = S.friends[ouid] || S.nearbyUsers[ouid];
+    if (!p) { const s = await getDoc(doc(db, 'users', ouid)); p = s.exists() ? s.data() : { displayName: 'Unknown', photoURL: '' }; }
+    const unread = !c.readBy?.includes(S.user.uid);
+    const time   = c.lastMessageAt?.toDate?.()?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '';
+    return `<div class="conv-row" data-uid="${ouid}">
+      ${avatarHTML('size-md', p)}
+      <div class="conv-info">
+        <div class="conv-name">${escH(p.displayName || 'User')}</div>
+        <div class="conv-last${unread ? ' unread' : ''}">${escH(c.lastMessage || '…')}</div>
+      </div>
+      <div class="conv-meta">
+        <span class="conv-time">${time}</span>
+        ${unread ? '<div class="conv-unread-dot"></div>' : ''}
       </div>
     </div>`;
-
-  // Rail action listeners
-  card.querySelector(".like-action").addEventListener("click",e=>{
-    e.stopPropagation();
-    swipePost("like");
-  });
-  card.querySelector(".msg-action").addEventListener("click",e=>{
-    e.stopPropagation();
-    const user={uid:post.uid,displayName:post.displayName,mood:post.mood,distance:post.distance||0};
-    openThread(user);
-  });
-  card.querySelector(".skip-action").addEventListener("click",e=>{
-    e.stopPropagation();
-    swipePost("skip");
-  });
-  card.querySelector(".ptk-wave-btn")?.addEventListener("click",e=>{
-    e.stopPropagation();
-    const user={uid:post.uid,displayName:post.displayName,mood:post.mood,distance:post.distance||0};
-    openThread(user);
-  });
-
-  return card;
+  }));
+  list.innerHTML = items.join('');
+  list.querySelectorAll('.conv-row').forEach(r =>
+    r.addEventListener('click', () => openChat(r.dataset.uid)));
 }
 
-function attachSwipeListeners(card,post){
-  let startX=0,startY=0,currentX=0,dragging=false;
-
-  const onStart=(x,y)=>{startX=x;startY=y;currentX=x;dragging=true;card.style.transition="none";};
-  const onMove=(x)=>{
-    if(!dragging)return;
-    currentX=x; const dx=x-startX;
-    card.style.transform=`translateX(${dx}px) rotate(${dx*0.04}deg)`;
-    const likeLabel=document.getElementById("swipe-like-label");
-    const skipLabel=document.getElementById("swipe-skip-label");
-    if(likeLabel)likeLabel.style.opacity=Math.min(dx/80,1).toString();
-    if(skipLabel)skipLabel.style.opacity=Math.min(-dx/80,1).toString();
-  };
-  const onEnd=()=>{
-    if(!dragging)return; dragging=false;
-    const dx=currentX-startX;
-    const likeLabel=document.getElementById("swipe-like-label");
-    const skipLabel=document.getElementById("swipe-skip-label");
-    if(likeLabel)likeLabel.style.opacity="0";
-    if(skipLabel)skipLabel.style.opacity="0";
-    if(dx>80)      swipePost("like",card);
-    else if(dx<-80)swipePost("skip",card);
-    else{card.style.transition="transform 0.35s cubic-bezier(0.34,1.56,0.64,1)";card.style.transform="";}
-  };
-
-  // Touch
-  card.addEventListener("touchstart",e=>{onStart(e.touches[0].clientX,e.touches[0].clientY);},{passive:true});
-  card.addEventListener("touchmove",e=>{onMove(e.touches[0].clientX);},{passive:true});
-  card.addEventListener("touchend",onEnd);
-
-  // Mouse
-  card.addEventListener("mousedown",e=>{onStart(e.clientX,e.clientY);});
-  window.addEventListener("mousemove",e=>{if(dragging)onMove(e.clientX);});
-  window.addEventListener("mouseup",onEnd);
+// ════════════════════════════════════════════════════════════
+//  USER PROFILE (other user)
+// ════════════════════════════════════════════════════════════
+function openUserProfile(uid) {
+  S.viewingUid = uid;
+  const p = S.friends[uid] || S.nearbyUsers[uid];
+  if (!p) return;
+  setAvatar('up-avatar-initial', 'up-avatar-img', p);
+  $('up-name').textContent         = p.displayName || 'User';
+  $('up-status-badge').textContent = statusText(p) || 'Active';
+  const z = zoneMatch(p);
+  $('up-location').textContent = z ? `📍 ${z}` : p.location ? `${p.location.lat.toFixed(4)}, ${p.location.lng.toFixed(4)}` : 'Unknown';
+  $('up-battery').textContent  = p.battery != null ? `${p.battery}%${p.isCharging ? ' ⚡ Charging' : ''}` : 'Unknown';
+  $('up-speed').textContent    = (p.speed || 0) > 0 ? `${p.speed} km/h` : 'Stationary';
+  const ts = p.location?.updatedAt?.toDate?.();
+  if (ts) {
+    const m = Math.round((Date.now() - ts) / 60000);
+    $('up-since').textContent = m < 2 ? 'Just now' : m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ago`;
+  } else $('up-since').textContent = '–';
+  $('up-add-friend-btn').hidden = !!S.friends[uid];
+  openPanel('user-profile');
 }
 
-function swipePost(direction,cardEl){
-  const post=state.postQueue[state.currentPostIndex]; if(!post)return;
-  const card=cardEl||document.querySelector(".post-tiktok");
-  if(!card)return;
-
-  // Animate card off screen
-  card.style.transition="transform 0.4s cubic-bezier(0.4,0,1,1), opacity 0.3s";
-  card.style.transform=direction==="like"
-    ?"translateX(110vw) rotate(20deg)":"translateX(-110vw) rotate(-20deg)";
-  card.style.opacity="0";
-
-  // Record in Firestore
-  if(state.uid&&post.id){
-    const update=direction==="like"
-      ?{likes:firebase.firestore.FieldValue.increment(1)}
-      :{skips:firebase.firestore.FieldValue.increment(1)};
-    db.collection("posts").doc(post.id).update(update).catch(()=>{});
-  }
-
-  // Mark as seen
-  const seenKey=`drift_seen_${state.uid}`;
-  const seen=JSON.parse(localStorage.getItem(seenKey)||"[]");
-  seen.push(post.id); if(seen.length>500)seen.splice(0,seen.length-400);
-  localStorage.setItem(seenKey,JSON.stringify(seen));
-
-  // Advance queue
-  state.currentPostIndex++;
-  setTimeout(()=>{card.remove();renderCurrentPost();},380);
-
-  if(direction==="like")showToast("Liked","success");
+// ════════════════════════════════════════════════════════════
+//  GHOST MODE
+// ════════════════════════════════════════════════════════════
+async function setGhost(on) {
+  S.ghostMode = on;
+  $('ghost-toggle').checked = on;
+  $('ghost-btn').classList.toggle('active', on);
+  $('ghost-indicator').hidden = !on;
+  const upd = { ghostMode: on, ghostLocation: on && S.myLat ? { lat: S.myLat, lng: S.myLng } : null };
+  await updateDoc(doc(db, 'users', S.user.uid), upd).catch(() => {});
+  if (S.profile) { S.profile.ghostMode = on; if (!on) S.profile.ghostLocation = null; }
+  upsertSelf();
+  showToast(on ? '👻 Ghost mode on' : 'Ghost mode off');
 }
 
-// ── CREATE POST ───────────────────────────────────
-// Holds pending media before submitting
-let pendingMedia = null; // { url, type: 'image'|'video' }
+// ════════════════════════════════════════════════════════════
+//  NAVIGATION / PANELS
+// ════════════════════════════════════════════════════════════
+const PANEL_MAP = {
+  map: null, friends: 'friends-panel', messages: 'messages-panel',
+  profile: 'profile-panel', chat: 'chat-panel',
+  'user-profile': 'user-profile-panel', settings: 'settings-panel',
+};
 
-function initCreatePostModal(){
-  const textarea=document.getElementById("cp-text");
-  const counter=document.getElementById("cp-char-count");
-  if(textarea){
-    textarea.addEventListener("input",()=>{
-      const left=300-textarea.value.length;
-      if(counter)counter.textContent=left;
-      if(counter)counter.style.color=left<30?"#ef4444":"";
-    });
-  }
-
-  // Media upload buttons — use Cloudinary upload widget
-  document.getElementById("btn-add-image")?.addEventListener("click",()=>openMediaUpload("image"));
-  document.getElementById("btn-add-video")?.addEventListener("click",()=>openMediaUpload("video"));
-  document.getElementById("cp-remove-media")?.addEventListener("click",clearPendingMedia);
-
-  document.getElementById("btn-submit-post")?.addEventListener("click",async()=>{
-    const text=textarea?.value.trim();
-    if(!text&&!pendingMedia){showToast("Add some text or media first","error");return;}
-    if(!state.coords){showToast("Location required","error");return;}
-    const btn=document.getElementById("btn-submit-post");
-    btn.disabled=true; btn.textContent="Posting...";
-    try{
-      await db.collection("posts").add({
-        uid:state.uid,
-        displayName:state.user?.displayName||"Anonymous",
-        mood:state.user?.mood||null,
-        text:text||"",
-        mediaURL:pendingMedia?.url||null,
-        mediaType:pendingMedia?.type||null,
-        location:new firebase.firestore.GeoPoint(state.coords.lat,state.coords.lng),
-        likes:0, skips:0,
-        createdAt:firebase.firestore.FieldValue.serverTimestamp(),
-      });
-      closeCreatePost();
-      showToast("Post shared with your zone","success");
-    }catch(e){showToast("Failed to post. Try again.","error");}
-    btn.disabled=false; btn.textContent="Post";
+function openPanel(name) {
+  S.activePanel = name;
+  document.querySelectorAll('.nav-item').forEach(b =>
+    b.classList.toggle('active', b.dataset.panel === name));
+  document.querySelectorAll('.panel').forEach(p => {
+    p.classList.remove('open'); p.setAttribute('aria-hidden', 'true');
   });
+  const id = PANEL_MAP[name];
+  if (id) { const el = $(id); el.classList.add('open'); el.setAttribute('aria-hidden', 'false'); }
 }
 
-function openMediaUpload(resourceType){
-  if(!window.cloudinary){showToast("Upload widget not loaded","error");return;}
-  window.cloudinary.openUploadWidget({
-    cloudName:CLOUDINARY_CLOUD_NAME,
-    uploadPreset:CLOUDINARY_UPLOAD_PRESET,
-    sources:["local","camera"],
-    resourceType,
-    multiple:false,
-    maxFileSize:resourceType==="video"?100000000:10000000,
-    clientAllowedFormats:resourceType==="video"
-      ?["mp4","mov","webm","avi"]
-      :["jpg","jpeg","png","gif","webp","heic"],
-    styles:{palette:{window:"#0f0f1a",windowBorder:"#2a2a3a",tabIcon:"#7c3aed",
-      menuIcons:"#94949e",textDark:"#ffffff",link:"#7c3aed",action:"#7c3aed",
-      inProgress:"#7c3aed",complete:"#22c55e",error:"#ef4444"}},
-  },(err,result)=>{
-    if(err)return;
-    if(result.event==="success"){
-      pendingMedia={url:result.info.secure_url,type:resourceType};
-      showMediaPreview(result.info.secure_url,resourceType);
-    }
+function bindNav() {
+  document.querySelectorAll('.nav-item').forEach(btn =>
+    btn.addEventListener('click', () => {
+      openPanel(btn.dataset.panel);
+      if (btn.dataset.panel === 'map') recenterMap();
+    })
+  );
+}
+
+function bindBackBtns() {
+  document.querySelectorAll('.back-btn').forEach(btn =>
+    btn.addEventListener('click', () => openPanel(btn.dataset.back || 'map'))
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+//  TOP BAR
+// ════════════════════════════════════════════════════════════
+function bindTopBar() {
+  $('my-avatar-btn').addEventListener('click', () => openPanel('profile'));
+  $('mode-toggle').addEventListener('click', e => {
+    const btn = e.target.closest('.mode-btn');
+    if (!btn || btn.dataset.mode === S.mapMode) return;
+    S.mapMode = btn.dataset.mode;
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === S.mapMode));
+    if (S.mapMode === 'explore') loadNearbyUsers();
+    else { clearExploreMarkers(); refreshMapMarkers(); }
+  });
+  $('ghost-btn').addEventListener('click', () => setGhost(!S.ghostMode));
+}
+
+// ════════════════════════════════════════════════════════════
+//  PROFILE BINDINGS
+// ════════════════════════════════════════════════════════════
+function bindProfile() {
+  $('change-photo-btn').addEventListener('click', () => $('photo-input').click());
+  $('photo-input').addEventListener('change', e => { if (e.target.files[0]) uploadPhoto(e.target.files[0]); e.target.value = ''; });
+  $('public-toggle').addEventListener('change', async e => {
+    await updateDoc(doc(db, 'users', S.user.uid), { isPublic: e.target.checked }).catch(() => {});
+    if (S.profile) S.profile.isPublic = e.target.checked;
+    showToast(e.target.checked ? 'Visible to everyone nearby.' : 'Friends-only mode.');
+  });
+  $('ghost-toggle').addEventListener('change', e => setGhost(e.target.checked));
+  $('add-zone-btn').addEventListener('click', () => { $('zone-name-input').value = ''; $('zone-modal').hidden = false; setTimeout(() => $('zone-name-input').focus(), 100); });
+  $('settings-btn').addEventListener('click', () => openPanel('settings'));
+  $('save-settings-btn').addEventListener('click', async () => {
+    const name = $('settings-name').value.trim();
+    if (!name) return;
+    await Promise.all([
+      updateProfile(auth.currentUser, { displayName: name }),
+      updateDoc(doc(db, 'users', S.user.uid), { displayName: name }),
+    ]);
+    if (S.profile) S.profile.displayName = name;
+    $('profile-name').textContent = name;
+    upsertSelf(); showToast('Name updated!'); openPanel('profile');
+  });
+  $('logout-btn').addEventListener('click', async () => {
+    if (S.watchId) navigator.geolocation.clearWatch(S.watchId);
+    S.unsubs.forEach(u => u());
+    if (S.convUnsub) S.convUnsub();
+    if (S.chatUnsub) S.chatUnsub();
+    await updateDoc(doc(db, 'users', S.user.uid), { status: 'offline' }).catch(() => {});
+    await signOut(auth);
+    location.reload();
+  });
+
+  // User profile buttons
+  $('up-message-btn').addEventListener('click', () => { if (S.viewingUid) openChat(S.viewingUid); });
+  $('up-add-friend-btn').addEventListener('click', async () => {
+    const p = S.friends[S.viewingUid] || S.nearbyUsers[S.viewingUid];
+    if (!p?.email) return;
+    const err = await sendFriendRequest(p.email);
+    showToast(err || 'Friend request sent!');
   });
 }
 
-function showMediaPreview(url,type){
-  const preview=document.getElementById("cp-media-preview");
-  const img=document.getElementById("cp-preview-img");
-  const vid=document.getElementById("cp-preview-vid");
-  if(!preview)return;
-  preview.classList.remove("hidden");
-  if(type==="image"){
-    img.src=url; img.style.display="block";
-    vid.style.display="none"; vid.src="";
-  }else{
-    vid.src=url; vid.style.display="block";
-    img.style.display="none"; img.src="";
-  }
-}
-
-function clearPendingMedia(){
-  pendingMedia=null;
-  const preview=document.getElementById("cp-media-preview");
-  if(preview)preview.classList.add("hidden");
-  const img=document.getElementById("cp-preview-img");
-  const vid=document.getElementById("cp-preview-vid");
-  if(img){img.src="";img.style.display="none";}
-  if(vid){vid.src="";vid.style.display="none";}
-}
-
-function openCreatePost(){
-  const avatar=document.getElementById("cp-avatar");
-  if(avatar){
-    avatar.style.background=orbColor(state.user?.mood);
-    avatar.textContent=nameInitial(state.user?.displayName||"?");
-  }
-  const zoneEl=document.getElementById("cp-zone-radius");
-  if(zoneEl)zoneEl.textContent=state.zoneRadius+"m";
-  const modal=document.getElementById("modal-create-post");
-  modal.classList.remove("hidden"); modal.classList.add("open");
-  document.getElementById("cp-text")?.focus();
-}
-
-function closeCreatePost(){
-  const modal=document.getElementById("modal-create-post");
-  modal.classList.add("hidden"); modal.classList.remove("open");
-  if(document.getElementById("cp-text")) document.getElementById("cp-text").value="";
-  if(document.getElementById("cp-char-count")) document.getElementById("cp-char-count").textContent="300";
-  clearPendingMedia();
-}
-
-// ══════════════════════════════════════════════════
-//  SEED 20 TEST USERS
-// ══════════════════════════════════════════════════
-async function seedTestUsers(){
-  if(!state.coords){showToast("Location needed to seed users","error");return;}
-  const btn=document.getElementById("btn-seed-users");
-  if(btn){btn.disabled=true;btn.innerHTML=`<span>Seeding...</span>`;}
-
-  const batch=db.batch();
-  const moods=["open","chill","lost","bored","curious","observe",null,null];
-
-  for(let i=0;i<20;i++){
-    const name=SEED_NAMES[i];
-    const bio=SEED_BIOS[i%SEED_BIOS.length];
-    const mood=moods[Math.floor(Math.random()*moods.length)];
-    const offset=randomOffset(randomBetween(30,state.zoneRadius*0.9));
-    const lat=state.coords.lat+offset.lat;
-    const lng=state.coords.lng+offset.lng;
-    const uid=`seed_user_${name.toLowerCase()}_drift`;
-
-    const ref=db.collection("users").doc(uid);
-    batch.set(ref,{
-      uid,displayName:name,email:`${name.toLowerCase()}@drift.test`,
-      photoURL:null,bio,mood,anchorMode:false,
-      isVisible:true,isOnline:true,isSeeded:true,showTrail:true,
-      driftScore:Math.floor(Math.random()*80),
-      totalConvos:Math.floor(Math.random()*20),
-      totalGhosts:Math.floor(Math.random()*5),
-      location:new firebase.firestore.GeoPoint(lat,lng),
-      lastSeen:firebase.firestore.FieldValue.serverTimestamp(),
-      createdAt:firebase.firestore.FieldValue.serverTimestamp(),
-    },{merge:true});
-
-    // Also seed a post from each user
-    if(i<10){
-      const postTexts=["anyone else just vibing out here?","this spot is so underrated","drifted here by accident. staying.",
-        "good energy in this area","literally just exploring, what about you?","the city feels different at this hour",
-        "first time here, what am I missing?","someone recommend a good coffee spot nearby","I see you drifting","quiet day or just me?"];
-      const pRef=db.collection("posts").doc(`seed_post_${uid}`);
-      batch.set(pRef,{
-        uid,displayName:name,mood,text:postTexts[i%postTexts.length],
-        location:new firebase.firestore.GeoPoint(lat,lng),
-        likes:Math.floor(Math.random()*30),skips:Math.floor(Math.random()*10),
-        createdAt:firebase.firestore.FieldValue.serverTimestamp(),
-      },{merge:true});
-    }
-  }
-
-  try{
-    await batch.commit();
-    showToast("20 test users + 10 posts seeded nearby","success");
-    loadNearbyUsers();
-    if(state.currentView==="posts")loadPosts();
-  }catch(e){
-    showToast("Seed failed — check Firestore rules","error");
-  }
-
-  if(btn){
-    btn.disabled=false;
-    btn.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>Seed 20 Test Users Nearby`;
-  }
-}
-
-// ── PROFILE ───────────────────────────────────────
-function initProfile(){
-  initInboxTabs();
-
-  document.getElementById("btn-upload-photo")?.addEventListener("click",()=>{
-    if(!window.cloudinary){showToast("Upload widget not loaded","error");return;}
-    window.cloudinary.openUploadWidget({
-      cloudName:CLOUDINARY_CLOUD_NAME,uploadPreset:CLOUDINARY_UPLOAD_PRESET,
-      sources:["local","camera"],cropping:true,croppingAspectRatio:1,multiple:false,maxFileSize:5000000,
-      styles:{palette:{window:"#0f0f1a",windowBorder:"#2a2a3a",tabIcon:"#7c3aed",
-        menuIcons:"#94949e",textDark:"#ffffff",link:"#7c3aed",action:"#7c3aed",
-        inProgress:"#7c3aed",complete:"#22c55e",error:"#ef4444"}},
-    },(err,result)=>{if(!err&&result.event==="success")updateProfilePhoto(result.info.secure_url);});
-  });
-
-  document.getElementById("btn-save-bio")?.addEventListener("click",async()=>{
-    const bio=document.getElementById("profile-bio-input")?.value.trim()||"";
-    if(!state.uid)return;
-    await db.collection("users").doc(state.uid).update({bio});
-    if(state.user)state.user.bio=bio;
-    showToast("Bio saved","success");
-  });
-
-  document.getElementById("btn-seed-users")?.addEventListener("click",seedTestUsers);
-
-  document.getElementById("btn-logout")?.addEventListener("click",async()=>{
-    if(!confirm("Sign out of Drift?"))return;
-    if(state.uid) db.collection("users").doc(state.uid).update({isOnline:false}).catch(()=>{});
-    cleanupApp(); await auth.signOut();
+// ════════════════════════════════════════════════════════════
+//  FRIENDS BINDINGS
+// ════════════════════════════════════════════════════════════
+function bindFriends() {
+  $('add-friend-btn').addEventListener('click', () => {
+    $('add-friend-email').value = '';
+    $('add-friend-error').textContent = '';
+    $('add-friend-modal').hidden = false;
+    setTimeout(() => $('add-friend-email').focus(), 100);
   });
 }
 
-async function updateProfilePhoto(url){
-  if(!state.uid)return;
-  await db.collection("users").doc(state.uid).update({photoURL:url});
-  await state.authUser?.updateProfile({photoURL:url});
-  if(state.user)state.user.photoURL=url;
-  const img=document.getElementById("profile-avatar-img");
-  const init=document.getElementById("profile-avatar-initial");
-  if(img){img.src=url;img.style.display="block";}
-  if(init)init.style.display="none";
-  showToast("Photo updated","success");
+// ════════════════════════════════════════════════════════════
+//  CHAT BINDINGS
+// ════════════════════════════════════════════════════════════
+function bindChat() {
+  $('send-btn').addEventListener('click', sendMessage);
+  $('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+  $('chat-locate-btn').addEventListener('click', () => {
+    const p = S.friends[S.activeChatUid] || S.nearbyUsers[S.activeChatUid];
+    if (!p?.location) { showToast('Location not available.'); return; }
+    openPanel('map');
+    S.map.flyTo([p.location.lat, p.location.lng], 16, { duration: 1 });
+  });
+  $('chat-user-info').addEventListener('click', () => { if (S.activeChatUid) openUserProfile(S.activeChatUid); });
 }
 
-function renderProfile(){
-  const name=state.user?.displayName||state.authUser?.displayName||"Anonymous";
-  const email=state.user?.email||state.authUser?.email||"";
-  const photo=state.user?.photoURL||state.authUser?.photoURL||"";
-  const bio=state.user?.bio||"";
-  document.getElementById("profile-name-display").textContent=name;
-  document.getElementById("profile-email-display").textContent=email;
-  document.getElementById("profile-avatar-initial").textContent=nameInitial(name);
-  document.getElementById("profile-bio-input").value=bio;
-  const moodDisplay=document.getElementById("profile-mood-display");
-  const moodLabels={open:"Open",chill:"Chill",lost:"Lost",bored:"Bored",curious:"Curious",observe:"Observing"};
-  const mood=state.user?.mood;
-  if(moodDisplay){moodDisplay.textContent=mood?moodLabels[mood]:"No mood set";moodDisplay.style.color=mood?orbColor(mood):"";}
-  if(photo){
-    const img=document.getElementById("profile-avatar-img");
-    const init=document.getElementById("profile-avatar-initial");
-    if(img){img.src=photo;img.style.display="block";}
-    if(init)init.style.display="none";
-  }
-  if(state.uid){
-    db.collection("users").doc(state.uid).get().then(snap=>{
-      if(!snap.exists)return; const d=snap.data();
-      document.getElementById("stat-zones").textContent=d.driftScore||0;
-      document.getElementById("stat-convos").textContent=d.totalConvos||0;
-      document.getElementById("stat-ghosts").textContent=d.totalGhosts||0;
-    });
-  }
+// ════════════════════════════════════════════════════════════
+//  MODALS
+// ════════════════════════════════════════════════════════════
+function bindModals() {
+  // Add friend
+  $('cancel-add-friend').addEventListener('click', () => $('add-friend-modal').hidden = true);
+  $('confirm-add-friend').addEventListener('click', async () => {
+    const email = $('add-friend-email').value.trim();
+    if (!email) return;
+    const err = await sendFriendRequest(email);
+    if (err) { $('add-friend-error').textContent = err; }
+    else { $('add-friend-modal').hidden = true; showToast('Friend request sent!'); }
+  });
+  $('add-friend-modal').addEventListener('click', e => { if (e.target === $('add-friend-modal')) $('add-friend-modal').hidden = true; });
+  $('add-friend-email').addEventListener('keydown', async e => {
+    if (e.key !== 'Enter') return;
+    const email = $('add-friend-email').value.trim();
+    if (!email) return;
+    const err = await sendFriendRequest(email);
+    if (err) $('add-friend-error').textContent = err;
+    else { $('add-friend-modal').hidden = true; showToast('Friend request sent!'); }
+  });
+
+  // Zone
+  $('cancel-zone').addEventListener('click', () => $('zone-modal').hidden = true);
+  $('confirm-zone').addEventListener('click', async () => {
+    const name = $('zone-name-input').value.trim();
+    if (!name) return;
+    $('zone-modal').hidden = true;
+    await addZone(name);
+  });
+  $('zone-name-input').addEventListener('keydown', async e => {
+    if (e.key !== 'Enter') return;
+    const name = $('zone-name-input').value.trim();
+    if (!name) return;
+    $('zone-modal').hidden = true;
+    await addZone(name);
+  });
+  $('zone-modal').addEventListener('click', e => { if (e.target === $('zone-modal')) $('zone-modal').hidden = true; });
 }
 
-// ── SETTINGS ──────────────────────────────────────
-function initSettings(){
-  // Theme toggle — persisted in localStorage
-  const themeToggle=document.getElementById("setting-light-theme");
-  if(themeToggle){
-    const saved=localStorage.getItem("drift_light_theme")==="1";
-    themeToggle.checked=saved;
-    if(saved) document.body.classList.add("light-theme");
-    themeToggle.addEventListener("change",function(){
-      document.body.classList.toggle("light-theme",this.checked);
-      localStorage.setItem("drift_light_theme",this.checked?"1":"0");
-      showToast(this.checked?"Light theme on ☀️":"Dark theme on 🌙","info");
-    });
-  }
-  document.getElementById("setting-visible")?.addEventListener("change",function(){
-    if(!state.uid)return;
-    db.collection("users").doc(state.uid).update({isVisible:this.checked}).catch(()=>{});
-    showToast(this.checked?"Visible on map":"Hidden from map","info");
-  });
-  document.getElementById("setting-trail")?.addEventListener("change",function(){
-    if(!state.uid)return; db.collection("users").doc(state.uid).update({showTrail:this.checked}).catch(()=>{});
-  });
-  document.getElementById("setting-radius")?.addEventListener("change",function(){
-    state.zoneRadius=parseInt(this.value);
-    document.getElementById("radius-label").textContent=`${this.value} meters`;
-    loadNearbyUsers(); updateZoneRingSize(); syncOrbElements(true);
-  });
-  document.getElementById("btn-change-pw")?.addEventListener("click",async()=>{
-    if(!state.authUser?.email)return;
-    await auth.sendPasswordResetEmail(state.authUser.email);
-    showToast("Reset email sent to "+state.authUser.email,"success");
-  });
-  document.getElementById("btn-delete-account")?.addEventListener("click",async()=>{
-    if(!confirm("Permanently delete your account? This cannot be undone."))return;
-    try{await db.collection("users").doc(state.uid).delete();await state.authUser.delete();}
-    catch(e){showToast(e.code==="auth/requires-recent-login"?"Please re-login first, then try again.":"Error deleting account","error");}
-  });
+// ════════════════════════════════════════════════════════════
+//  UTILITIES
+// ════════════════════════════════════════════════════════════
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371, r = Math.PI / 180;
+  const dLat = (lat2 - lat1) * r, dLon = (lon2 - lon1) * r;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// ── BOOT ──────────────────────────────────────────
-// Apply saved theme before first paint
-if(localStorage.getItem("drift_light_theme")==="1") document.body.classList.add("light-theme");
+function escH(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
-window.addEventListener("load",()=>{
-  setTimeout(()=>{showScreen("auth-screen");initAuth();initAuthCanvas();},2400);
-});
-window.addEventListener("beforeunload",()=>{
-  if(state.uid) db.collection("users").doc(state.uid).update({isOnline:false}).catch(()=>{});
-});
+function avatarHTML(cls, p) {
+  if (p?.photoURL) return `<div class="avatar ${cls}"><img src="${escH(p.photoURL)}" alt="" loading="lazy"/></div>`;
+  return `<div class="avatar ${cls}"><span>${escH((p?.displayName || '?')[0].toUpperCase())}</span></div>`;
+}
+
+let _toastTimer;
+function showToast(msg) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+}

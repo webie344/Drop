@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Orbit — Seed Test Locations</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0A0A0A; color: #fff;
+      min-height: 100vh; padding: 40px 24px;
+      display: flex; flex-direction: column; align-items: center;
+    }
+    .card {
+      width: 100%; max-width: 600px;
+      background: #111; border: 1px solid #222;
+      border-radius: 20px; padding: 32px;
+      display: flex; flex-direction: column; gap: 24px;
+    }
+    h1 { font-size: 24px; font-weight: 800; letter-spacing: -0.5px; }
+    p  { font-size: 14px; color: #888; line-height: 1.6; }
+    .btn {
+      padding: 15px 24px;
+      background: linear-gradient(135deg, #7C3AED, #EC4899);
+      border: none; border-radius: 12px;
+      color: #fff; font-size: 15px; font-weight: 700;
+      cursor: pointer; transition: opacity 0.2s;
+    }
+    .btn:hover    { opacity: 0.88; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn.secondary {
+      background: #1A1A1A; border: 1px solid #333; color: #ccc;
+    }
+    .log {
+      background: #000; border: 1px solid #222;
+      border-radius: 12px; padding: 16px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 13px; color: #4ADE80;
+      max-height: 320px; overflow-y: auto;
+      line-height: 1.7;
+      white-space: pre-wrap;
+    }
+    .log .err { color: #FF4757; }
+    .log .dim { color: #555; }
+    .log .hi  { color: #A78BFA; }
+    input {
+      width: 100%; padding: 13px 16px;
+      background: #1A1A1A; border: 1px solid #333;
+      border-radius: 10px; color: #fff;
+      font-size: 14px; font-family: inherit;
+    }
+    input::placeholder { color: #555; }
+    label { font-size: 12px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.08em; }
+    .field { display: flex; flex-direction: column; gap: 7px; }
+    .row { display: flex; gap: 12px; }
+    .row > * { flex: 1; }
+    .pill {
+      display: inline-block; padding: 4px 10px;
+      border-radius: 100px; font-size: 11px; font-weight: 700;
+      background: rgba(74,222,128,0.12); color: #4ADE80;
+      border: 1px solid rgba(74,222,128,0.2);
+    }
+    .pill.warn { background: rgba(255,71,87,0.12); color: #FF4757; border-color: rgba(255,71,87,0.2); }
+    hr { border: none; border-top: 1px solid #1A1A1A; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div>
+    <h1>🌍 Orbit — Seed Test Data</h1>
+    <p style="margin-top:8px">Adds realistic default locations to your existing Firestore user profiles so you can test the map immediately. Only updates users with no location set.</p>
+  </div>
+
+  <hr/>
+
+  <div class="field">
+    <label>Firebase Config (paste your config object)</label>
+    <textarea id="config-input" rows="8" style="width:100%;padding:13px 16px;background:#1A1A1A;border:1px solid #333;border-radius:10px;color:#4ADE80;font-size:12px;font-family:'SF Mono','Fira Code',monospace;resize:vertical;" placeholder='Paste your Firebase config here, e.g.:
+{
+  apiKey: "...",
+  authDomain: "...",
+  projectId: "...",
+  ...
+}'></textarea>
+  </div>
+
+  <div class="row">
+    <div class="field">
+      <label>Seed Radius (km from each city)</label>
+      <input type="number" id="radius" value="5" min="0.1" max="50" step="0.1"/>
+    </div>
+    <div class="field">
+      <label>Also make users public?</label>
+      <select id="make-public" style="width:100%;padding:13px 16px;background:#1A1A1A;border:1px solid #333;border-radius:10px;color:#fff;font-size:14px;">
+        <option value="yes">Yes — visible on Explore</option>
+        <option value="no">No — friends only</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="seed-btn" onclick="runSeed()">🌱 Seed All Users</button>
+    <button class="btn secondary" id="list-btn" onclick="listUsers()">📋 List All Users First</button>
+    <button class="btn secondary" onclick="clearLog()">Clear Log</button>
+  </div>
+
+  <div class="log" id="log">Waiting… paste your Firebase config above and click a button.<br/><span class="dim">─────────────────────────────────</span><br/></div>
+</div>
+
+<!-- Firebase SDK -->
+<script type="module">
+import { initializeApp }   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getFirestore, collection, getDocs, updateDoc, doc, serverTimestamp }
+  from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+
+// ── Cities spread across the globe for realistic test data ──
+const CITIES = [
+  { name: 'London, UK',          lat: 51.5074,  lng: -0.1278  },
+  { name: 'New York, USA',       lat: 40.7128,  lng: -74.0060 },
+  { name: 'Paris, France',       lat: 48.8566,  lng: 2.3522   },
+  { name: 'Tokyo, Japan',        lat: 35.6762,  lng: 139.6503 },
+  { name: 'Lagos, Nigeria',      lat: 6.5244,   lng: 3.3792   },
+  { name: 'Dubai, UAE',          lat: 25.2048,  lng: 55.2708  },
+  { name: 'São Paulo, Brazil',   lat: -23.5505, lng: -46.6333 },
+  { name: 'Sydney, Australia',   lat: -33.8688, lng: 151.2093 },
+  { name: 'Toronto, Canada',     lat: 43.6532,  lng: -79.3832 },
+  { name: 'Berlin, Germany',     lat: 52.5200,  lng: 13.4050  },
+  { name: 'Mumbai, India',       lat: 19.0760,  lng: 72.8777  },
+  { name: 'Cairo, Egypt',        lat: 30.0444,  lng: 31.2357  },
+  { name: 'Mexico City, Mexico', lat: 19.4326,  lng: -99.1332 },
+  { name: 'Seoul, South Korea',  lat: 37.5665,  lng: 126.9780 },
+  { name: 'Johannesburg, SA',    lat: -26.2041, lng: 28.0473  },
+  { name: 'Amsterdam, NL',       lat: 52.3676,  lng: 4.9041   },
+  { name: 'Singapore',           lat: 1.3521,   lng: 103.8198 },
+  { name: 'Istanbul, Turkey',    lat: 41.0082,  lng: 28.9784  },
+  { name: 'Bangkok, Thailand',   lat: 13.7563,  lng: 100.5018 },
+  { name: 'Buenos Aires, AR',    lat: -34.6037, lng: -58.3816 },
+];
+
+const STATUSES = ['online', 'moving', 'idle'];
+const SPEEDS   = [0, 0, 0, 3, 12, 45, 0, 0]; // weighted toward stationary
+
+function randIn(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function jitter(km) {
+  // random offset within `km` radius in lat/lng degrees
+  const r = km / 111; // 1 deg ≈ 111 km
+  const angle = Math.random() * 2 * Math.PI;
+  const dist  = Math.random() * r;
+  return { dlat: dist * Math.cos(angle), dlng: dist * Math.sin(angle) };
+}
+
+function parseConfig(raw) {
+  raw = raw.trim();
+
+  // ── Step 1: Strip common wrappers Firebase Console adds ──────────────
+  // e.g. "const firebaseConfig = { ... };"
+  // e.g. "var firebaseConfig = { ... };"
+  // e.g. "const app = initializeApp({ ... });" — grab just the object
+  raw = raw
+    .replace(/^(const|let|var)\s+\w+\s*=\s*/, '') // strip "const X = "
+    .replace(/;\s*$/, '')                           // strip trailing ";"
+    .replace(/^initializeApp\s*\(/, '')             // strip "initializeApp("
+    .replace(/\)\s*$/, '')                          // strip closing ")"
+    .trim();
+
+  // ── Step 2: If it's wrapped in initializeApp call, unwrap ─────────────
+  // Already handled above, but also handle multiline version
+  if (raw.startsWith('initializeApp')) {
+    const m = raw.match(/initializeApp\s*\(([\s\S]*)\)/);
+    if (m) raw = m[1].trim();
+  }
+
+  // ── Step 3: Try direct eval (most reliable for JS object literals) ────
+  try {
+    // eslint-disable-next-line no-new-func
+    const result = Function('return (' + raw + ')')();
+    if (result && result.projectId) return result;
+  } catch (_) {}
+
+  // ── Step 4: Try JSON parse with key quoting as last resort ────────────
+  try {
+    const json = raw
+      .replace(/\/\/.*$/gm, '')                       // strip // comments
+      .replace(/\/\*[\s\S]*?\*\//g, '')               // strip /* comments */
+      .replace(/,\s*([}\]])/g, '$1')                  // strip trailing commas
+      .replace(/([{,]\s*)([a-zA-Z_]\w*)\s*:/g, '$1"$2":') // quote keys
+      .replace(/:\s*'([^']*)'/g, ': "$1"');           // single → double quotes
+    return JSON.parse(json);
+  } catch (_) {}
+
+  return null;
+}
+
+let _db = null;
+function getDB() {
+  const raw = document.getElementById('config-input').value.trim();
+  if (!raw) { log('❌ Paste your Firebase config first.', 'err'); return null; }
+  const cfg = parseConfig(raw);
+  if (!cfg?.projectId) { log('❌ Could not parse config. Make sure it has a projectId.', 'err'); return null; }
+  if (!_db) {
+    try {
+      const app = initializeApp(cfg, 'seed-' + Date.now());
+      _db = getFirestore(app);
+      log(`✅ Connected to project: <span class="hi">${cfg.projectId}</span>`);
+    } catch (e) { log('❌ Firebase init failed: ' + e.message, 'err'); return null; }
+  }
+  return _db;
+}
+
+window.listUsers = async function() {
+  const db = getDB(); if (!db) return;
+  log('\n📋 Fetching all users…');
+  setLoading(true);
+  try {
+    const snap = await getDocs(collection(db, 'users'));
+    log(`Found <span class="hi">${snap.size}</span> user(s):\n`);
+    snap.forEach(d => {
+      const u = d.data();
+      const hasLoc = !!u.location;
+      log(`  ${hasLoc ? '📍' : '⬜'} <span class="hi">${u.displayName || 'No name'}</span> — ${u.email || d.id} ${hasLoc ? '<span class="pill">has location</span>' : '<span class="pill warn">no location</span>'}`);
+    });
+  } catch (e) { log('❌ ' + e.message, 'err'); }
+  setLoading(false);
+};
+
+window.runSeed = async function() {
+  const db = getDB(); if (!db) return;
+  const radius    = parseFloat(document.getElementById('radius').value) || 5;
+  const makePublic = document.getElementById('make-public').value === 'yes';
+
+  log('\n🌱 Starting seed…');
+  setLoading(true);
+  try {
+    const snap = await getDocs(collection(db, 'users'));
+    let seeded = 0, skipped = 0;
+
+    const updates = [];
+    let idx = 0;
+    snap.forEach(d => {
+      const u   = d.data();
+      const uid = d.id;
+      if (u.location) { skipped++; log(`  ⏭  <span class="dim">${u.displayName || uid} — already has location, skipping</span>`); return; }
+
+      const city  = CITIES[idx % CITIES.length];
+      idx++;
+      const off   = jitter(radius);
+      const lat   = +(city.lat + off.dlat).toFixed(6);
+      const lng   = +(city.lng + off.dlng).toFixed(6);
+      const speed = randIn(SPEEDS);
+      const bat   = Math.floor(Math.random() * 80) + 20; // 20–100%
+      const status = speed > 10 ? 'moving' : speed > 0 ? 'moving' : 'online';
+
+      updates.push({ uid, displayName: u.displayName, city: city.name, lat, lng, speed, bat, status });
+    });
+
+    for (const u of updates) {
+      const upd = {
+        location: { lat: u.lat, lng: u.lng, updatedAt: serverTimestamp() },
+        speed: u.speed,
+        battery: u.bat,
+        isCharging: false,
+        status: u.status,
+        ghostMode: false,
+        lastSeen: serverTimestamp(),
+      };
+      if (makePublic) upd.isPublic = true;
+
+      await updateDoc(doc(db, 'users', u.uid), upd);
+      log(`  ✅ <span class="hi">${u.displayName || u.uid}</span> → ${u.city} (${u.lat}, ${u.lng}) · ${u.bat}% battery · ${u.speed} km/h`);
+      seeded++;
+    }
+
+    log(`\n🎉 Done! <span class="hi">${seeded}</span> user(s) seeded, ${skipped} skipped (already had location).`);
+    if (makePublic) log(`👁  All seeded users are now public — switch to Explore mode to see them.`);
+    else log(`👥 Users are friends-only. Add them as friends to see them on the map.`);
+  } catch (e) { log('❌ Error: ' + e.message, 'err'); console.error(e); }
+  setLoading(false);
+};
+
+window.clearLog = function() { document.getElementById('log').innerHTML = '<span class="dim">Log cleared.</span>\n'; };
+
+function log(msg, type = '') {
+  const el  = document.getElementById('log');
+  const div = document.createElement('div');
+  if (type === 'err') div.className = 'err';
+  div.innerHTML = msg;
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+}
+
+function setLoading(on) {
+  document.getElementById('seed-btn').disabled = on;
+  document.getElementById('list-btn').disabled = on;
+}
+</script>
+</body>
+</html>
