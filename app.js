@@ -1,1044 +1,1304 @@
+// Firebase CDN SDK — imports MUST be at the very top of an ES module
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {
+  getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
+  signOut, onAuthStateChanged, updateProfile
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {
+  getFirestore, doc, getDoc, setDoc, updateDoc, addDoc, collection,
+  query, where, orderBy, getDocs, onSnapshot, serverTimestamp,
+  increment, limit, Timestamp
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
 // ============================================================
-//  ORBIT — App Logic
-//  No composite Firestore indexes — all filtering client-side
+//  NNPC INVESTMENT PLATFORM — app.js
+//  Replace the firebaseConfig below with YOUR Firebase project
+//  credentials from https://console.firebase.google.com
 // ============================================================
 
-import { FIREBASE_CONFIG, CLOUDINARY_CONFIG, LOCATION_UPDATE_INTERVAL, EXPLORE_RADIUS_KM } from './config.js';
-
-import { initializeApp }                          from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getAuth, createUserWithEmailAndPassword,
-         signInWithEmailAndPassword, signOut,
-         onAuthStateChanged, updateProfile }       from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFirestore, doc, setDoc, getDoc,
-         updateDoc, collection, query, where,
-         onSnapshot, addDoc, getDocs,
-         serverTimestamp, orderBy, limit,
-         Timestamp, deleteDoc }                    from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-
-// ── Init ─────────────────────────────────────────────────────
-const firebaseApp = initializeApp(FIREBASE_CONFIG);
-const auth = getAuth(firebaseApp);
-const db   = getFirestore(firebaseApp);
-
-// ── State ─────────────────────────────────────────────────────
-const S = {
-  user: null, profile: null,
-  mapMode: 'friends',
-  activePanel: 'map',
-  activeChatUid: null,
-  viewingUid: null,
-  myLat: null, myLng: null, mySpeed: 0,
-  myBattery: null, myCharging: false,
-  ghostMode: false,
-  watchId: null,
-  lastLocationSent: 0,
-  friends: {},        // uid → profile
-  friendRequests: [], // pending incoming docs
-  nearbyUsers: {},    // uid → profile
-  markers: {},        // uid → L.Marker (reused, never recreated)
-  markerPositions: {},
-  selfMarker: null,
-  map: null,
-  unsubs: [],
-  convUnsub: null,
-  chatUnsub: null,
+const firebaseConfig = {
+  apiKey: "AIzaSyC9jF-ocy6HjsVzWVVlAyXW-4aIFgA79-A",
+    authDomain: "crypto-6517d.firebaseapp.com",
+    projectId: "crypto-6517d",
+    storageBucket: "crypto-6517d.firebasestorage.app",
+    messagingSenderId: "60263975159",
+    appId: "1:60263975159:web:bd53dcaad86d6ed9592bf2"
 };
 
-const $ = id => document.getElementById(id);
+// Cloudinary config — replace with your Cloudinary credentials
+const CLOUDINARY_CLOUD_NAME = "ddtdqrh1b";
+const CLOUDINARY_UPLOAD_PRESET = "profile-pictures"; // unsigned preset
 
-// ════════════════════════════════════════════════════════════
-//  AUTH STATE
-// ════════════════════════════════════════════════════════════
-onAuthStateChanged(auth, async user => {
-  if (user) {
-    S.user = user;
-    await loadMyProfile();
-    showScreen('app');
-    initApp();
-  } else {
-    S.user = null;
-    showScreen('auth');
-  }
-  hideLoader();
-});
+// Opay Payment Details — replace with your real details
+const PAYMENT_DETAILS = {
+  bank: "Opay",
+  accountName: "NNPC Investment Platform",
+  accountNumber: "9012345678"
+};
 
-function showScreen(name) {
-  $('auth-screen').classList.toggle('active', name === 'auth');
-  $('app-screen').classList.toggle('active',  name === 'app');
-}
-function hideLoader() {
-  const el = $('loader');
-  el.classList.add('hide');
-  setTimeout(() => el.style.display = 'none', 400);
-}
+// Telegram config — replace with YOUR values (see README for how to get these)
+const TELEGRAM_BOT_TOKEN    = "8651392929:AAH5DX2iKkEPPxPKCQYPcy8liVkIcVeVDps";       // from @BotFather on Telegram
+const TELEGRAM_ADMIN_CHAT_ID = "8664727924";  // your personal Telegram user ID
+const TELEGRAM_BOT_USERNAME  = "Nnpc_investment_forum_bot";     // e.g. NNPCInvestBot (no @)
 
-// ════════════════════════════════════════════════════════════
-//  AUTH FORMS
-// ════════════════════════════════════════════════════════════
-document.querySelectorAll('.auth-tab').forEach(btn =>
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.auth-tab').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('active'));
-    btn.classList.add('active');
-    $(`${btn.dataset.tab}-form`).classList.add('active');
-  })
-);
+// ============================================================
+//  INVESTMENT PLANS CONFIG
+// ============================================================
+const PLANS = [
+  { id: "starter",   name: "Starter",   amount: 4000,      daily: 800,     days: 55, total: 44000,      class: "starter",   emoji: "🌱" },
+  { id: "bronze",    name: "Bronze",    amount: 10000,     daily: 2000,    days: 55, total: 110000,     class: "bronze",    emoji: "🥉" },
+  { id: "silver",    name: "Silver",    amount: 50000,     daily: 10000,   days: 55, total: 550000,     class: "silver",    emoji: "🥈" },
+  { id: "gold",      name: "Gold",      amount: 200000,    daily: 40000,   days: 55, total: 2200000,    class: "gold",      emoji: "🥇" },
+  { id: "diamond",   name: "Diamond",   amount: 500000,    daily: 100000,  days: 55, total: 5500000,    class: "diamond",   emoji: "💎" },
+  { id: "executive", name: "Executive", amount: 1800000,   daily: 360000,  days: 55, total: 19800000,   class: "executive", emoji: "👑" }
+];
 
-$('login-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const btn = $('login-btn');
-  setBtnLoading(btn, true);
-  $('login-error').textContent = '';
+const SIGNUP_BONUS = 2000;
+const WITHDRAW_DELAY_DAYS = 2;
+const PAYMENT_TIMER_MINUTES = 30;
+
+// ============================================================
+//  FIREBASE INIT
+// ============================================================
+const app   = initializeApp(firebaseConfig);
+const auth  = getAuth(app);
+const db    = getFirestore(app);
+
+// ============================================================
+//  GLOBALS
+// ============================================================
+let currentUser   = null;
+let userData      = null;
+let paymentTimer  = null;
+let onboardIndex  = 0;
+let unsubscribeSnapshot = null;
+let authInitialized = false; // prevents false logout flash on page load
+
+// ============================================================
+//  TELEGRAM NOTIFICATIONS
+// ============================================================
+async function sendTelegramAlert(message) {
+  if (!TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN === "YOUR_BOT_TOKEN") return;
   try {
-    await signInWithEmailAndPassword(auth, $('login-email').value.trim(), $('login-password').value);
-  } catch (err) {
-    $('login-error').textContent = authErr(err.code);
-    setBtnLoading(btn, false);
-  }
-});
-
-$('register-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const btn = $('register-btn');
-  setBtnLoading(btn, true);
-  $('register-error').textContent = '';
-  const name = $('reg-name').value.trim();
-  const email = $('reg-email').value.trim();
-  const pass  = $('reg-password').value;
-  try {
-    const cred = await createUserWithEmailAndPassword(auth, email, pass);
-    await updateProfile(cred.user, { displayName: name });
-    await setDoc(doc(db, 'users', cred.user.uid), {
-      uid: cred.user.uid, displayName: name, email,
-      photoURL: '', isPublic: false, ghostMode: false,
-      location: null, speed: 0, battery: null, isCharging: false,
-      status: 'offline', zones: [], createdAt: serverTimestamp(), lastSeen: serverTimestamp(),
-    });
-  } catch (err) {
-    $('register-error').textContent = authErr(err.code);
-    setBtnLoading(btn, false);
-  }
-});
-
-function setBtnLoading(btn, on) {
-  btn.disabled = on;
-  btn.querySelector('.btn-text').hidden    = on;
-  btn.querySelector('.btn-spinner').hidden = !on;
-}
-function authErr(code) {
-  const m = {
-    'auth/user-not-found':       'No account with that email.',
-    'auth/wrong-password':       'Wrong password.',
-    'auth/invalid-credential':   'Incorrect email or password.',
-    'auth/email-already-in-use': 'Email already registered.',
-    'auth/weak-password':        'Password needs at least 6 characters.',
-    'auth/invalid-email':        'Invalid email address.',
-    'auth/too-many-requests':    'Too many attempts. Try again later.',
-  };
-  return m[code] || 'Something went wrong. Try again.';
-}
-
-// ════════════════════════════════════════════════════════════
-//  PROFILE LOAD
-// ════════════════════════════════════════════════════════════
-async function loadMyProfile() {
-  const snap = await getDoc(doc(db, 'users', S.user.uid));
-  if (snap.exists()) S.profile = snap.data();
-}
-
-// ════════════════════════════════════════════════════════════
-//  APP INIT
-// ════════════════════════════════════════════════════════════
-function initApp() {
-  initMap();
-  initGeolocation();
-  initBattery();
-  updateProfileUI();
-  listenFriends();
-  listenFriendRequests();
-  listenConversations();
-  bindNav();
-  bindTopBar();
-  bindProfile();
-  bindFriends();
-  bindChat();
-  bindModals();
-  bindBackBtns();
-}
-
-// ════════════════════════════════════════════════════════════
-//  MAP — performance-first, zero lag
-// ════════════════════════════════════════════════════════════
-function initMap() {
-  S.map = L.map('map', {
-    zoomControl: false,
-    attributionControl: false,
-    inertia: true,
-    inertiaDeceleration: 2400,
-    inertiaMaxSpeed: 1800,
-    easeLinearity: 0.2,
-    maxZoom: 19, minZoom: 2,
-  }).setView([20, 0], 2);
-
-  // OSM tiles with CSS dark-mode filter — far more readable than CartoDB dark_all
-  // The CSS filter is applied in style.css (.leaflet-tile-pane)
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    detectRetina: true,
-    updateWhenZooming: false,
-    updateWhenIdle: false,
-    keepBuffer: 4,
-  }).addTo(S.map);
-
-  // Force a size recalculation after the map container is fully visible
-  setTimeout(() => S.map.invalidateSize({ animate: false }), 100);
-
-  $('recenter-btn').addEventListener('click', recenterMap);
-  S.map.on('click', () => { if (S.activePanel !== 'map') openPanel('map'); });
-}
-
-function recenterMap() {
-  if (S.myLat !== null)
-    S.map.flyTo([S.myLat, S.myLng], 15, { duration: 0.9, easeLinearity: 0.4 });
-}
-
-// ── Smooth glide between GPS fixes (Zenly trick) ──────────────
-function animateMarker(uid, lat, lng) {
-  const marker = S.markers[uid];
-  if (!marker) return;
-  const prev = S.markerPositions[uid];
-  S.markerPositions[uid] = { lat, lng };
-  if (!prev) { marker.setLatLng([lat, lng]); return; }
-  const dLat = lat - prev.lat, dLng = lng - prev.lng;
-  // Skip animation if tiny movement (< ~3 m) — avoid jitter
-  if (dLat * dLat + dLng * dLng < 0.0000000008) {
-    marker.setLatLng([lat, lng]); return;
-  }
-  const DURATION = Math.min(LOCATION_UPDATE_INTERVAL, 12000);
-  const t0 = performance.now();
-  function step(now) {
-    const p = Math.min((now - t0) / DURATION, 1);
-    const e = p < 0.5 ? 2 * p * p : -1 + (4 - 2 * p) * p;
-    marker.setLatLng([prev.lat + dLat * e, prev.lng + dLng * e]);
-    if (p < 1) requestAnimationFrame(step);
-  }
-  requestAnimationFrame(step);
-}
-
-// ── Create / update marker — NEVER re-add to map ──────────────
-function upsertMarker(uid, profile, isSelf = false) {
-  const { lat, lng } = displayLoc(profile);
-  if (!lat || !lng) return;
-
-  const sc   = statusClass(profile);
-  const ring = isSelf ? 'self' : (profile.ghostMode ? 'ghost' : sc);
-  const init = (profile.displayName || '?')[0].toUpperCase();
-  const photo = profile.photoURL
-    ? `<img src="${escH(profile.photoURL)}" alt="" loading="lazy"/>`
-    : `<span>${escH(init)}</span>`;
-  const bat = profile.battery != null && !isSelf
-    ? `<div class="bubble-battery${profile.battery < 20 ? ' low' : ''}">${profile.battery}%</div>`
-    : '';
-  const statusTxt = isSelf ? '' : statusText(profile);
-
-  if (S.markers[uid]) {
-    // ── UPDATE inner HTML only — marker stays on map ──
-    const el = S.markers[uid].getElement();
-    if (el) {
-      const inner   = el.querySelector('.bubble-ring');
-      const photoEl = el.querySelector('.bubble-inner');
-      const batEl   = el.querySelector('.bubble-battery');
-      const stEl    = el.querySelector('.bubble-status');
-      if (inner)   inner.className = `bubble-ring ${ring}`;
-      if (photoEl) photoEl.innerHTML = photo;
-      if (batEl)   batEl.outerHTML  = bat || '<span hidden></span>';
-      if (stEl)    stEl.textContent  = statusTxt;
-    }
-    animateMarker(uid, lat, lng);
-  } else {
-    // ── CREATE once ──
-    const icon = L.divIcon({
-      className: `user-bubble${isSelf ? ' self' : ''}`,
-      html: `
-        <div class="bubble-ring ${ring}" style="position:relative">
-          <div class="bubble-inner">${photo}</div>
-          ${bat}
-        </div>
-        <div class="bubble-label">${escH(profile.displayName || 'User')}</div>
-        ${statusTxt ? `<div class="bubble-status">${escH(statusTxt)}</div>` : ''}`,
-      iconSize:   [70, 90],
-      iconAnchor: [35, 45],
-    });
-    const marker = L.marker([lat, lng], { icon, zIndexOffset: isSelf ? 1000 : 0 })
-      .addTo(S.map);
-    if (!isSelf) marker.on('click', e => { L.DomEvent.stopPropagation(e); openUserProfile(uid); });
-    S.markers[uid] = marker;
-    S.markerPositions[uid] = { lat, lng };
-    if (isSelf) S.selfMarker = marker;
-  }
-}
-
-function removeMarker(uid) {
-  if (S.markers[uid]) { S.map.removeLayer(S.markers[uid]); delete S.markers[uid]; delete S.markerPositions[uid]; }
-}
-
-function displayLoc(p) {
-  if (p.ghostMode && p.ghostLocation) return { lat: p.ghostLocation.lat, lng: p.ghostLocation.lng };
-  if (p.location)                      return { lat: p.location.lat,      lng: p.location.lng };
-  return { lat: null, lng: null };
-}
-
-function statusClass(p) {
-  if (!p.location) return 'idle';
-  const age = Date.now() - (p.location.updatedAt?.toMillis?.() || 0);
-  if (age > 5 * 60000) return 'idle';
-  return (p.speed || 0) > 1.5 ? 'moving' : 'online';
-}
-
-function statusText(p) {
-  if (p.ghostMode) return '👻 Ghost mode';
-  const z = zoneMatch(p);
-  if (z) return `📍 ${z}`;
-  const sp = p.speed || 0;
-  if (sp > 100) return '✈️ On a flight';
-  if (sp > 40)  return '🚗 In a vehicle';
-  if (sp > 2)   return '🚶 On the move';
-  const ts = p.location?.updatedAt?.toMillis?.();
-  if (!ts) return '';
-  const m = Math.round((Date.now() - ts) / 60000);
-  if (m < 2)  return 'Just now';
-  if (m < 60) return `${m}m ago`;
-  return `${Math.floor(m / 60)}h ago`;
-}
-
-function zoneMatch(p) {
-  if (!p.zones?.length || !p.location) return null;
-  for (const z of p.zones)
-    if (haversine(p.location.lat, p.location.lng, z.lat, z.lng) < 0.15) return z.name;
-  return null;
-}
-
-// ════════════════════════════════════════════════════════════
-//  GEOLOCATION
-// ════════════════════════════════════════════════════════════
-function initGeolocation() {
-  if (!navigator.geolocation) { showToast('Location unavailable.'); return; }
-  S.watchId = navigator.geolocation.watchPosition(onPos, () => {},
-    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
-}
-
-let _pLat = null, _pLng = null, _pTs = null;
-function onPos({ coords: { latitude: lat, longitude: lng, speed } }) {
-  const now = Date.now();
-  S.myLat = lat; S.myLng = lng;
-  // Speed from GPS or calculated from delta
-  if (speed != null) {
-    S.mySpeed = Math.round(speed * 3.6);
-  } else if (_pLat !== null) {
-    const dt = (now - _pTs) / 3600000;
-    S.mySpeed = dt > 0 ? Math.min(Math.round(haversine(_pLat, _pLng, lat, lng) / dt), 999) : 0;
-  }
-  _pLat = lat; _pLng = lng; _pTs = now;
-  upsertSelf();
-  if (now - S.lastLocationSent >= LOCATION_UPDATE_INTERVAL) {
-    pushLocation(lat, lng);
-    S.lastLocationSent = now;
-  }
-}
-
-async function pushLocation(lat, lng) {
-  if (!S.user) return;
-  const upd = {
-    'location.lat': lat, 'location.lng': lng,
-    'location.updatedAt': serverTimestamp(),
-    speed: S.mySpeed, battery: S.myBattery,
-    isCharging: S.myCharging, lastSeen: serverTimestamp(),
-    ghostMode: S.ghostMode,
-  };
-  if (!S.ghostMode) upd.ghostLocation = null;
-  if (S.ghostMode && !S.profile?.ghostLocation) upd.ghostLocation = { lat, lng };
-  await updateDoc(doc(db, 'users', S.user.uid), upd).catch(() => {});
-}
-
-function upsertSelf() {
-  if (S.myLat === null || !S.profile) return;
-  upsertMarker(S.user.uid, {
-    ...S.profile,
-    location: { lat: S.myLat, lng: S.myLng },
-    speed: S.mySpeed, battery: S.myBattery, ghostMode: S.ghostMode,
-  }, true);
-}
-
-// ════════════════════════════════════════════════════════════
-//  BATTERY
-// ════════════════════════════════════════════════════════════
-async function initBattery() {
-  if (!navigator.getBattery) return;
-  try {
-    const b = await navigator.getBattery();
-    const upd = () => { S.myBattery = Math.round(b.level * 100); S.myCharging = b.charging; };
-    upd();
-    b.addEventListener('levelchange', upd);
-    b.addEventListener('chargingchange', upd);
-  } catch (_) {}
-}
-
-// ════════════════════════════════════════════════════════════
-//  FIRESTORE — FRIENDS
-//  Single where clause only → no composite index needed
-// ════════════════════════════════════════════════════════════
-function listenFriends() {
-  const uid = S.user.uid;
-  // Only one where clause — filter 'accepted' client-side
-  const q = query(collection(db, 'friendships'),
-    where('participants', 'array-contains', uid));
-
-  const unsub = onSnapshot(q, async snap => {
-    const accepted = snap.docs
-      .map(d => d.data())
-      .filter(d => d.status === 'accepted'); // ← client-side filter
-
-    const friendUids = accepted.map(d => d.participants.find(p => p !== uid)).filter(Boolean);
-
-    // Fetch new friend profiles
-    await Promise.all(
-      friendUids.filter(f => !S.friends[f]).map(async f => {
-        const s = await getDoc(doc(db, 'users', f));
-        if (s.exists()) S.friends[f] = s.data();
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_ADMIN_CHAT_ID,
+        text: message,
+        parse_mode: "HTML"
       })
+    });
+  } catch (_) { /* silent — never block the user */ }
+}
+
+// ============================================================
+//  UTILITY
+// ============================================================
+const fmt = n => "₦" + Number(n || 0).toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtShort = n => {
+  if (n >= 1e6) return "₦" + (n/1e6).toFixed(1) + "M";
+  if (n >= 1e3) return "₦" + (n/1e3).toFixed(0) + "K";
+  return fmt(n);
+};
+
+function showToast(msg, type = "info") {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.className = "toast " + type;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 3500);
+}
+
+function showScreen(id) {
+  document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
+  const el = document.getElementById(id);
+  if (el) el.classList.add("active");
+}
+
+function showTab(tab) {
+  document.querySelectorAll(".tab-page").forEach(p => p.classList.remove("active"));
+  document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+  document.getElementById("tab-" + tab)?.classList.add("active");
+  document.querySelector(`.nav-item[data-tab="${tab}"]`)?.classList.add("active");
+  window.scrollTo(0, 0);
+}
+
+function openModal(id) {
+  document.getElementById(id)?.classList.add("open");
+}
+
+function closeModal(id) {
+  document.getElementById(id)?.classList.remove("open");
+}
+
+function nextSlide() {
+  if (onboardIndex < onboardData.length - 1) {
+    onboardIndex++;
+    document.getElementById("onboard-slider").style.transform = `translateX(-${onboardIndex * 33.333}%)`;
+    renderOnboarding();
+  }
+}
+
+// Expose all functions called from HTML onclick to global scope
+// (required because this file runs as an ES module)
+window.showScreen  = showScreen;
+window.showTab     = showTab;
+window.openModal   = openModal;
+window.closeModal  = closeModal;
+window.nextSlide   = nextSlide;
+
+// ============================================================
+//  ACTIVITY TICKER
+// ============================================================
+(function initTicker() {
+  const phoneSeeds = [
+    "0801****4523","0703****8812","0812****2267","0905****1130","0816****7745",
+    "0702****3391","0811****5508","0913****4472","0708****9934","0803****6619",
+    "0817****2281","0706****8847","0901****5563","0815****3319","0704****7726",
+    "0902****8841","0813****4453","0709****1127","0816****6692","0705****2238"
+  ];
+  const amounts = [
+    { label: "₦4,000", plan: "Starter Plan" },
+    { label: "₦10,000", plan: "Bronze Plan" },
+    { label: "₦50,000", plan: "Silver Plan" },
+    { label: "₦200,000", plan: "Gold Plan" },
+    { label: "₦500,000", plan: "Diamond Plan" },
+    { label: "₦1,800,000", plan: "Executive Plan" },
+    { label: "₦4,000", plan: "Starter Plan" },
+    { label: "₦10,000", plan: "Bronze Plan" },
+    { label: "₦50,000", plan: "Silver Plan" },
+    { label: "₦200,000", plan: "Gold Plan" },
+  ];
+  const times = ["just now","2m ago","5m ago","8m ago","12m ago","15m ago","20m ago","28m ago","34m ago","41m ago"];
+
+  function shuffle(arr) {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function buildTicker() {
+    const track = document.getElementById("ticker-track");
+    if (!track) return;
+    const phones  = shuffle(phoneSeeds);
+    const entries = amounts.map((a, i) => ({
+      phone: phones[i % phones.length],
+      amount: a.label,
+      plan: a.plan,
+      time: times[i % times.length]
+    }));
+    // Duplicate entries so seamless infinite scroll works
+    const items = [...entries, ...entries].map(e => `
+      <div class="ticker-item">
+        <div class="ticker-dot"></div>
+        <span class="ticker-phone">${e.phone}</span>
+        <span class="ticker-action">activated</span>
+        <span class="ticker-amount">${e.amount}</span>
+        <span class="ticker-action">${e.plan}</span>
+        <span class="ticker-time">· ${e.time}</span>
+      </div>
+    `).join('');
+    track.innerHTML = items;
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", buildTicker);
+  } else {
+    buildTicker();
+  }
+})();
+
+function setLoading(btnId, loading, text = "Continue") {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  btn.disabled = loading;
+  btn.innerHTML = loading ? '<span class="spinner"></span> Please wait...' : text;
+}
+
+function relativeTime(ts) {
+  if (!ts) return "";
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60) return "Just now";
+  if (diff < 3600) return Math.floor(diff / 60) + "m ago";
+  if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
+  return Math.floor(diff / 86400) + "d ago";
+}
+
+function generateRefCode(uid) {
+  return "NNPC" + uid.substring(0, 6).toUpperCase();
+}
+
+// ============================================================
+//  ONBOARDING
+// ============================================================
+const onboardData = [
+  {
+    tag: "Nigeria's Trusted Platform",
+    title: "Invest in <span>NNPC</span> Energy Projects",
+    desc: "Join thousands of Nigerians growing their wealth through certified NNPC infrastructure investments. Secure, transparent, and profitable.",
+    imgUrl: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&q=80"
+  },
+  {
+    tag: "Daily Returns",
+    title: "Earn <span>Daily</span> Returns on Your Capital",
+    desc: "Watch your money grow every day. Our 55-day investment plans deliver consistent daily earnings — from ₦800 to ₦360,000 per day.",
+    imgUrl: "https://images.unsplash.com/photo-1473341304170-971dccb5ac1e?w=600&q=80"
+  },
+  {
+    tag: "Clean Energy Future",
+    title: "Power Nigeria's <span>Green</span> Future",
+    desc: "Fund solar mini-grids, gas distribution, and clean energy infrastructure projects that transform communities across Nigeria.",
+    imgUrl: "https://images.unsplash.com/photo-1497435334941-8c899ee9e8e9?w=600&q=80"
+  }
+];
+
+function renderOnboarding() {
+  const slider = document.getElementById("onboard-slider");
+  slider.innerHTML = onboardData.map((d, i) => `
+    <div class="onboard-slide">
+      <div class="onboard-img-placeholder">
+        <img class="bg-img" src="${d.imgUrl}" alt="" loading="lazy" onerror="this.style.display='none'">
+        <div class="onboard-overlay"></div>
+        <div class="nnpc-badge">
+          <div class="logo-circle">N</div>
+          <div class="logo-text">NNPC INVEST</div>
+        </div>
+      </div>
+      <div class="onboard-content">
+        <div class="onboard-tag">${d.tag}</div>
+        <h2 class="onboard-title">${d.title}</h2>
+        <p class="onboard-desc">${d.desc}</p>
+        <div class="onboard-dots">
+          ${onboardData.map((_, j) => `<div class="dot ${j === i ? 'active' : ''}"></div>`).join('')}
+        </div>
+        ${i < 2
+          ? `<button class="btn-next" onclick="nextSlide()">Next</button>
+             <button class="btn-skip" onclick="showScreen('screen-login')">Skip</button>`
+          : `<button class="btn-next" onclick="showScreen('screen-register')">Get Started — It's Free</button>
+             <button class="btn-skip" onclick="showScreen('screen-login')">Already have an account? Sign in</button>`}
+      </div>
+    </div>
+  `).join('');
+}
+
+// ============================================================
+//  AUTH — REGISTER
+// ============================================================
+document.getElementById("form-register")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  const fullName = document.getElementById("reg-name").value.trim();
+  const phone    = document.getElementById("reg-phone").value.trim();
+  const email    = document.getElementById("reg-email").value.trim();
+  const password = document.getElementById("reg-password").value;
+  const refBy    = document.getElementById("reg-ref").value.trim().toUpperCase();
+
+  if (!fullName || !email || !password || !phone) return showToast("Fill all required fields", "error");
+  if (password.length < 6) return showToast("Password must be 6+ characters", "error");
+
+  setLoading("btn-register", true);
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    await updateProfile(cred.user, { displayName: fullName });
+
+    const uid = cred.user.uid;
+    const refCode = generateRefCode(uid);
+
+    // Check referral
+    let referredByUid = null;
+    if (refBy) {
+      const refQ = await getDocs(query(collection(db, "users"), where("referralCode", "==", refBy)));
+      if (!refQ.empty) {
+        referredByUid = refQ.docs[0].id;
+      }
+    }
+
+    // Create user document
+    await setDoc(doc(db, "users", uid), {
+      uid, fullName, email, phone,
+      referralCode: refCode,
+      referredBy: referredByUid,
+      balance: 0,            // funded when admin approves a deposit
+      bonusBalance: SIGNUP_BONUS, // signup bonus — withdrawable after first deposit
+      referralBalance: 0,    // referral commissions — immediately withdrawable
+      earningsBalance: 0,    // plan daily earnings — withdrawable after Day 2
+      totalInvested: 0,
+      totalEarnings: 0,
+      activePlan: null,
+      planStartDate: null,
+      planDaysElapsed: 0,
+      depositMade: false,
+      referralBonusPaid: false,
+      telegramLinked: false,
+      kycStatus: "none",
+      status: "active",
+      createdAt: serverTimestamp()
+    });
+
+    // Signup bonus transaction
+    await addDoc(collection(db, "transactions"), {
+      uid, type: "bonus", amount: SIGNUP_BONUS,
+      description: "Welcome bonus",
+      status: "completed", createdAt: serverTimestamp()
+    });
+
+    // Notify admin on Telegram
+    await sendTelegramAlert(
+      `🆕 <b>New User Registered</b>\n👤 ${fullName}\n📱 ${phone}\n📧 ${email}\n🔗 Ref by: ${referredByUid || "None"}`
     );
 
-    // Remove unfriended
-    Object.keys(S.friends).forEach(f => {
-      if (!friendUids.includes(f)) {
-        delete S.friends[f];
-        if (S.mapMode === 'friends') removeMarker(f);
-        if (friendLocationUnsubs[f]) { friendLocationUnsubs[f](); delete friendLocationUnsubs[f]; }
-      }
-    });
-
-    friendUids.forEach(listenFriendLocation);
-    renderFriendsList();
-    updateStatCounts();
-    if (S.mapMode === 'friends') refreshMapMarkers();
-  });
-
-  S.unsubs.push(unsub);
-}
-
-const friendLocationUnsubs = {};
-function listenFriendLocation(fuid) {
-  if (friendLocationUnsubs[fuid]) return;
-  const unsub = onSnapshot(doc(db, 'users', fuid), snap => {
-    if (!snap.exists()) return;
-    const data = snap.data();
-    S.friends[fuid] = data;
-    if (S.mapMode === 'friends') {
-      if (data.location) upsertMarker(fuid, data);
-      else removeMarker(fuid);
-    }
-    if (S.activeChatUid === fuid) updateChatHeader(data);
-    renderFriendsList();
-  });
-  friendLocationUnsubs[fuid] = unsub;
-  S.unsubs.push(unsub);
-}
-
-// ════════════════════════════════════════════════════════════
-//  EXPLORE — nearby users (client-side distance filter)
-// ════════════════════════════════════════════════════════════
-async function loadNearbyUsers() {
-  showToast('Loading nearby users…');
-  // No composite index — single field query only
-  const q = query(collection(db, 'users'), where('isPublic', '==', true));
-  const snap = await getDocs(q);
-  clearExploreMarkers();
-  const hasGPS = S.myLat !== null && S.myLng !== null;
-  snap.forEach(s => {
-    const d = s.data();
-    const uid = s.id; // use doc ID — more reliable than d.uid field
-    if (uid === S.user.uid || !d.location) return;
-    // If GPS available, filter by radius. If not, show everyone on Explore
-    if (hasGPS) {
-      const dist = haversine(S.myLat, S.myLng, d.location.lat, d.location.lng);
-      if (dist > EXPLORE_RADIUS_KM) return;
-    }
-    d.uid = uid; // ensure uid field exists
-    S.nearbyUsers[uid] = d;
-    upsertMarker(uid, d);
-  });
-  const count = Object.keys(S.nearbyUsers).length;
-  showToast(count > 0 ? `${count} people on Explore` : 'No public users found. Run seed.html first.');
-}
-
-function clearExploreMarkers() {
-  Object.keys(S.nearbyUsers).forEach(uid => { if (!S.friends[uid]) removeMarker(uid); });
-  S.nearbyUsers = {};
-}
-
-function refreshMapMarkers() {
-  Object.entries(S.friends).forEach(([uid, p]) => {
-    if (p.location) upsertMarker(uid, p); else removeMarker(uid);
-  });
-  upsertSelf();
-}
-
-// ════════════════════════════════════════════════════════════
-//  FRIEND REQUESTS
-//  Single where('to') — filter status client-side
-// ════════════════════════════════════════════════════════════
-function listenFriendRequests() {
-  const uid = S.user.uid;
-  // Only filter by 'to' — no composite index
-  const q = query(collection(db, 'friendships'), where('to', '==', uid));
-  const unsub = onSnapshot(q, snap => {
-    S.friendRequests = snap.docs
-      .map(d => ({ id: d.id, ...d.data() }))
-      .filter(d => d.status === 'pending'); // ← client-side
-    renderFriendRequests();
-    const count = S.friendRequests.length;
-    const badge = $('requests-badge');
-    badge.hidden = count === 0;
-    badge.textContent = count;
-  });
-  S.unsubs.push(unsub);
-}
-
-async function sendFriendRequest(email) {
-  email = email.trim().toLowerCase();
-  if (email === S.user.email?.toLowerCase()) return 'You cannot add yourself.';
-  const snap = await getDocs(query(collection(db, 'users'), where('email', '==', email)));
-  if (snap.empty) return 'No user found with that email.';
-  const targetUid = snap.docs[0].id;
-
-  // Check existing — single where only
-  const ex = await getDocs(query(collection(db, 'friendships'),
-    where('participants', 'array-contains', S.user.uid)));
-  if (ex.docs.some(d => d.data().participants.includes(targetUid)))
-    return 'Already friends or request already sent.';
-
-  await addDoc(collection(db, 'friendships'), {
-    participants: [S.user.uid, targetUid],
-    from: S.user.uid, to: targetUid,
-    status: 'pending', createdAt: serverTimestamp(),
-  });
-  return null;
-}
-
-async function acceptRequest(id) { await updateDoc(doc(db, 'friendships', id), { status: 'accepted' }); }
-async function rejectRequest(id) { await deleteDoc(doc(db, 'friendships', id)); }
-
-// ════════════════════════════════════════════════════════════
-//  CONVERSATIONS
-//  Single where — sort client-side, no composite index
-// ════════════════════════════════════════════════════════════
-function listenConversations() {
-  // No orderBy — sort in JS to avoid composite index
-  const q = query(collection(db, 'conversations'),
-    where('participants', 'array-contains', S.user.uid));
-
-  const unsub = onSnapshot(q, snap => {
-    // Sort by lastMessageAt descending — client-side
-    const convs = snap.docs
-      .map(d => ({ id: d.id, ...d.data() }))
-      .sort((a, b) => {
-        const ta = a.lastMessageAt?.toMillis?.() || 0;
-        const tb = b.lastMessageAt?.toMillis?.() || 0;
-        return tb - ta;
-      });
-
-    renderConversations(convs);
-
-    // Unread count
-    const unread = convs.filter(c => !c.readBy?.includes(S.user.uid)).length;
-    const badge = $('unread-badge');
-    badge.hidden = unread === 0;
-    badge.textContent = unread;
-  });
-
-  if (S.convUnsub) S.convUnsub();
-  S.convUnsub = unsub;
-}
-
-async function getOrCreateConv(otherUid) {
-  const q = query(collection(db, 'conversations'),
-    where('participants', 'array-contains', S.user.uid));
-  const snap = await getDocs(q);
-  const existing = snap.docs.find(d => d.data().participants.includes(otherUid));
-  if (existing) return existing.id;
-  const ref = await addDoc(collection(db, 'conversations'), {
-    participants: [S.user.uid, otherUid],
-    lastMessage: '', lastMessageAt: serverTimestamp(), readBy: [S.user.uid],
-  });
-  return ref.id;
-}
-
-function openChat(uid) {
-  const profile = S.friends[uid] || S.nearbyUsers[uid];
-  if (!profile) return;
-  S.activeChatUid = uid;
-  updateChatHeader(profile);
-  markRead(uid);
-  loadMessages(uid);
-  openPanel('chat');
-}
-
-function updateChatHeader(p) {
-  setAvatar('chat-avatar-initial', 'chat-avatar-img', p);
-  $('chat-name').textContent        = p.displayName || 'User';
-  $('chat-status-text').textContent = statusText(p);
-}
-
-async function markRead(otherUid) {
-  const id = await getOrCreateConv(otherUid);
-  updateDoc(doc(db, 'conversations', id), { readBy: [S.user.uid] }).catch(() => {});
-}
-
-function loadMessages(otherUid) {
-  if (S.chatUnsub) S.chatUnsub();
-  const chatEl = $('chat-messages');
-  chatEl.innerHTML = '';
-
-  getOrCreateConv(otherUid).then(convId => {
-    // Single orderBy on one field — no composite index
-    const q = query(collection(db, 'conversations', convId, 'messages'),
-      orderBy('createdAt', 'asc'), limit(200));
-
-    S.chatUnsub = onSnapshot(q, snap => {
-      chatEl.innerHTML = '';
-      let lastDate = null;
-      snap.docs.forEach(d => {
-        const msg = d.data();
-        const dt  = msg.createdAt?.toDate?.();
-        if (dt) {
-          const ds = dt.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-          if (ds !== lastDate) {
-            const div = document.createElement('div');
-            div.className = 'chat-date-divider';
-            div.textContent = ds;
-            chatEl.appendChild(div);
-            lastDate = ds;
-          }
-        }
-        appendMsg(msg);
-      });
-      chatEl.scrollTop = chatEl.scrollHeight;
-    });
-  });
-}
-
-function appendMsg(msg) {
-  const mine = msg.senderId === S.user.uid;
-  const div  = document.createElement('div');
-  div.className = `msg ${mine ? 'out' : 'in'}`;
-  const time = msg.createdAt?.toDate?.()?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '';
-  div.innerHTML  = `<div class="msg-bubble">${escH(msg.text)}</div>`;
-  if (time) {
-    const t = document.createElement('div');
-    t.className = 'msg-time';
-    t.textContent = time;
-    div.appendChild(t);
+    // Show Telegram join prompt
+    showToast(`Welcome ${fullName}! ₦2,000 bonus added 🎉`, "success");
+    setTimeout(() => openModal("modal-telegram-prompt"), 1200);
+  } catch (err) {
+    showToast(err.message.replace("Firebase: ", ""), "error");
+    setLoading("btn-register", false);
   }
-  $('chat-messages').appendChild(div);
-}
+});
 
-async function sendMessage() {
-  const input = $('chat-input');
-  const text  = input.value.trim();
-  if (!text || !S.activeChatUid) return;
-  input.value = '';
+// ============================================================
+//  AUTH — LOGIN
+// ============================================================
+document.getElementById("form-login")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  const email    = document.getElementById("login-email").value.trim();
+  const password = document.getElementById("login-password").value;
+  if (!email || !password) return showToast("Enter email and password", "error");
 
-  // Optimistic UI
-  appendMsg({ text, senderId: S.user.uid, createdAt: Timestamp.now() });
-  $('chat-messages').scrollTop = $('chat-messages').scrollHeight;
-
-  const convId = await getOrCreateConv(S.activeChatUid);
-  await Promise.all([
-    addDoc(collection(db, 'conversations', convId, 'messages'),
-      { text, senderId: S.user.uid, createdAt: serverTimestamp() }),
-    updateDoc(doc(db, 'conversations', convId),
-      { lastMessage: text, lastMessageAt: serverTimestamp(), readBy: [S.user.uid] }),
-  ]);
-}
-
-// ════════════════════════════════════════════════════════════
-//  PROFILE
-// ════════════════════════════════════════════════════════════
-function updateProfileUI() {
-  if (!S.profile) return;
-  const p = S.profile;
-  $('profile-name').textContent  = p.displayName || '';
-  $('profile-email').textContent = p.email || S.user.email || '';
-  $('settings-name').value       = p.displayName || '';
-  $('public-toggle').checked     = !!p.isPublic;
-  $('ghost-toggle').checked      = !!p.ghostMode;
-  S.ghostMode                    = !!p.ghostMode;
-  setAvatar('profile-avatar-initial', 'profile-avatar-img', p);
-  setAvatar('top-avatar-initial',     'top-avatar-img',     p);
-  renderZones();
-  updateStatCounts();
-}
-
-function setAvatar(initId, imgId, p) {
-  const ini = $(initId), img = $(imgId);
-  if (!ini || !img) return;
-  if (p?.photoURL) { img.src = p.photoURL; img.hidden = false; ini.textContent = ''; }
-  else             { img.hidden = true; img.src = ''; ini.textContent = (p?.displayName || '?')[0].toUpperCase(); }
-}
-
-function updateStatCounts() {
-  $('stat-friends').textContent = Object.keys(S.friends).length;
-  $('stat-zones').textContent   = S.profile?.zones?.length || 0;
-}
-
-async function uploadPhoto(file) {
-  showToast('Uploading…');
-  const fd = new FormData();
-  fd.append('file', file);
-  fd.append('upload_preset', CLOUDINARY_CONFIG.uploadPreset);
-  fd.append('folder', 'orbit/avatars');
+  setLoading("btn-login", true);
   try {
-    const res  = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CONFIG.cloudName}/image/upload`, { method: 'POST', body: fd });
-    const data = await res.json();
-    if (!data.secure_url) throw new Error();
-    await Promise.all([
-      updateProfile(auth.currentUser, { photoURL: data.secure_url }),
-      updateDoc(doc(db, 'users', S.user.uid), { photoURL: data.secure_url }),
-    ]);
-    S.profile.photoURL = data.secure_url;
-    updateProfileUI(); upsertSelf();
-    showToast('Photo updated!');
-  } catch { showToast('Upload failed. Check Cloudinary preset.'); }
+    await signInWithEmailAndPassword(auth, email, password);
+  } catch (err) {
+    showToast("Invalid email or password", "error");
+    setLoading("btn-login", false);
+  }
+});
+
+// ============================================================
+//  AUTH STATE
+// ============================================================
+onAuthStateChanged(auth, async user => {
+  if (user) {
+    currentUser = user;
+    authInitialized = true;
+    await loadUserData(user.uid);
+    showScreen("screen-app");
+    showTab("home");
+    document.getElementById("full-loader").style.display = "none";
+  } else {
+    // On first load Firebase briefly emits null before resolving the session.
+    // Only show the login screen after the SDK has confirmed the auth state.
+    if (authInitialized) {
+      if (unsubscribeSnapshot) { unsubscribeSnapshot(); unsubscribeSnapshot = null; }
+      currentUser = null;
+      userData = null;
+      showScreen("screen-login");
+    }
+    document.getElementById("full-loader").style.display = "none";
+    authInitialized = true;
+  }
+});
+
+// ============================================================
+//  LOAD USER DATA + REALTIME
+// ============================================================
+async function loadUserData(uid) {
+  if (unsubscribeSnapshot) unsubscribeSnapshot();
+  let prevReferralBalance = null; // track to detect incoming referral credits
+
+  unsubscribeSnapshot = onSnapshot(doc(db, "users", uid), async snap => {
+    if (!snap.exists()) return;
+    const newData = snap.data();
+
+    // Detect a new referral bonus credit using localStorage so it works even
+    // when the bonus was credited while the user was offline.
+    const storageKey = `lastRefBal_${uid}`;
+    const newRefBal  = newData.referralBalance || 0;
+    const lastSeen   = parseFloat(localStorage.getItem(storageKey) || "0");
+    if (newRefBal > lastSeen) {
+      showReferralCreditPopup(newRefBal - lastSeen);
+    }
+    localStorage.setItem(storageKey, String(newRefBal));
+
+    userData = newData;
+
+    // Credit daily earnings if plan active
+    await creditDailyEarnings();
+
+    renderDashboard();
+    renderProfile();
+  });
 }
 
-function renderZones() {
-  const el    = $('zones-list');
-  const zones = S.profile?.zones || [];
-  $('stat-zones').textContent = zones.length;
-  el.innerHTML = zones.length === 0
-    ? '<p style="font-size:13px;color:var(--text2);padding:4px 0">No zones saved yet.</p>'
-    : zones.map((z, i) => `
-        <div class="zone-item">
-          <span>📍 ${escH(z.name)}</span>
-          <button class="zone-delete" data-i="${i}" aria-label="Delete">×</button>
-        </div>`).join('');
-  el.querySelectorAll('.zone-delete').forEach(b =>
-    b.addEventListener('click', () => deleteZone(+b.dataset.i)));
+function showReferralCreditPopup(amount) {
+  // Remove any existing popup first
+  document.getElementById("referral-credit-popup")?.remove();
+
+  const popup = document.createElement("div");
+  popup.id = "referral-credit-popup";
+  popup.style.cssText = `
+    position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+    background:#fff; border-radius:20px; padding:32px 28px; text-align:center;
+    z-index:9999; box-shadow:0 20px 60px rgba(0,0,0,0.25); max-width:300px; width:90%;
+    animation: popIn 0.35s cubic-bezier(0.34,1.56,0.64,1);
+  `;
+  popup.innerHTML = `
+    <div style="font-size:48px;margin-bottom:12px">🎉</div>
+    <div style="font-size:18px;font-weight:700;color:#1a1a2e;margin-bottom:8px">Referral Bonus Received!</div>
+    <div style="font-size:28px;font-weight:800;color:#22c55e;margin-bottom:12px">${fmt(amount)}</div>
+    <div style="font-size:14px;color:#666;margin-bottom:24px">
+      Someone you referred just made their first investment.<br>
+      Your referral bonus is <b>ready to withdraw now!</b>
+    </div>
+    <button onclick="document.getElementById('referral-credit-popup')?.remove(); document.getElementById('referral-popup-backdrop')?.remove();"
+      style="background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;
+             border-radius:12px;padding:12px 32px;font-size:15px;font-weight:700;cursor:pointer;width:100%">
+      Awesome! 🙌
+    </button>
+  `;
+
+  const backdrop = document.createElement("div");
+  backdrop.id = "referral-popup-backdrop";
+  backdrop.style.cssText = `
+    position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9998;
+  `;
+  backdrop.onclick = () => { popup.remove(); backdrop.remove(); };
+
+  // Inject keyframe if not already added
+  if (!document.getElementById("popIn-style")) {
+    const style = document.createElement("style");
+    style.id = "popIn-style";
+    style.textContent = `@keyframes popIn { from { opacity:0; transform:translate(-50%,-50%) scale(0.7); } to { opacity:1; transform:translate(-50%,-50%) scale(1); } }`;
+    document.head.appendChild(style);
+  }
+
+  document.body.appendChild(backdrop);
+  document.body.appendChild(popup);
 }
 
-async function addZone(name) {
-  if (S.myLat === null) { showToast('Location not available.'); return; }
-  const zones = [...(S.profile?.zones || []), { name, lat: S.myLat, lng: S.myLng }];
-  await updateDoc(doc(db, 'users', S.user.uid), { zones });
-  S.profile.zones = zones; renderZones();
-  showToast(`Zone "${name}" saved!`);
+// ============================================================
+//  DAILY EARNINGS ENGINE
+// ============================================================
+async function creditDailyEarnings() {
+  const uid = currentUser?.uid;   // capture early — guards against mid-flight auth changes
+  if (!uid || !userData || !userData.activePlan || !userData.planStartDate) return;
+
+  const plan = PLANS.find(p => p.id === userData.activePlan);
+  if (!plan) return;
+
+  const startDate = userData.planStartDate.toDate ? userData.planStartDate.toDate() : new Date(userData.planStartDate);
+  const now = new Date();
+  const daysSinceStart = Math.floor((now - startDate) / (1000 * 60 * 60 * 24));
+  const daysToCredit = Math.min(daysSinceStart, plan.days);
+  const alreadyCredited = userData.planDaysElapsed || 0;
+
+  if (daysToCredit > alreadyCredited && daysToCredit <= plan.days) {
+    const newDays = daysToCredit - alreadyCredited;
+    const earningsToAdd = newDays * plan.daily;
+
+    await updateDoc(doc(db, "users", uid), {
+      earningsBalance: increment(earningsToAdd),
+      totalEarnings: increment(earningsToAdd),
+      planDaysElapsed: daysToCredit
+    });
+
+    for (let d = alreadyCredited + 1; d <= daysToCredit; d++) {
+      await addDoc(collection(db, "transactions"), {
+        uid,
+        type: "earning",
+        amount: plan.daily,
+        description: `Day ${d} earnings — ${plan.name} Plan`,
+        status: "completed",
+        createdAt: serverTimestamp()
+      });
+    }
+
+    // End plan if complete
+    if (daysToCredit >= plan.days) {
+      await updateDoc(doc(db, "users", uid), {
+        activePlan: null, planStartDate: null
+      });
+      showToast(`🎉 Your ${plan.name} plan completed! ₦${plan.total.toLocaleString()} earned!`, "success");
+    }
+  }
 }
 
-async function deleteZone(i) {
-  const zones = [...(S.profile?.zones || [])];
-  zones.splice(i, 1);
-  await updateDoc(doc(db, 'users', S.user.uid), { zones });
-  S.profile.zones = zones; renderZones();
+// ============================================================
+//  RENDER DASHBOARD
+// ============================================================
+function renderDashboard() {
+  if (!userData) return;
+
+  const totalBalance = (userData.balance || 0) + (userData.bonusBalance || 0) + (userData.earningsBalance || 0);
+
+  // Portfolio card
+  document.getElementById("portfolio-value").textContent = fmt(totalBalance);
+  document.getElementById("stat-earnings").textContent = fmtShort(userData.totalEarnings || 0);
+  document.getElementById("stat-invested").textContent = fmtShort(userData.totalInvested || 0);
+  document.getElementById("stat-bonus").textContent = fmtShort((userData.balance || 0) + (userData.bonusBalance || 0));
+
+  // Header
+  const name = userData.fullName || currentUser?.displayName || "Investor";
+  document.getElementById("header-name").textContent = name.split(" ")[0];
+  document.getElementById("profile-avatar-letter").textContent = name[0].toUpperCase();
+
+  // Active plan progress
+  const epSection = document.getElementById("earnings-progress-section");
+  if (userData.activePlan) {
+    const plan = PLANS.find(p => p.id === userData.activePlan);
+    if (plan) {
+      const elapsed = userData.planDaysElapsed || 0;
+      const pct = (elapsed / plan.days) * 100;
+      epSection.style.display = "block";
+      document.getElementById("ep-plan-name").textContent = `${plan.name} Plan`;
+      document.getElementById("ep-earned").textContent = fmt(elapsed * plan.daily);
+      document.getElementById("ep-fill").style.width = pct + "%";
+      document.getElementById("ep-days").textContent = `Day ${elapsed} of ${plan.days}`;
+    }
+  } else {
+    epSection.style.display = "none";
+  }
+
+  // Load transactions
+  loadTransactions();
 }
 
-// ════════════════════════════════════════════════════════════
-//  RENDER — Friends list
-// ════════════════════════════════════════════════════════════
-function renderFriendsList() {
-  const list  = $('friends-list');
-  const empty = $('friends-empty');
-  const entries = Object.entries(S.friends);
-  empty.hidden = entries.length > 0;
-  list.innerHTML = entries.map(([uid, p]) => {
-    const sc = statusClass(p);
-    const dc = sc === 'online' ? 'green' : sc === 'moving' ? 'blue' : '';
-    return `<div class="user-row" data-uid="${uid}">
-      ${avatarHTML('size-sm', p)}
-      <div class="user-row-info">
-        <div class="user-row-name">${escH(p.displayName || 'User')}</div>
-        <div class="user-row-sub">${escH(statusText(p))}</div>
+// ============================================================
+//  TRANSACTIONS
+// ============================================================
+async function loadTransactions() {
+  const uid = currentUser.uid;
+  // Client-side sort avoids Firestore composite index requirement
+  const snap = await getDocs(query(collection(db, "transactions"), where("uid", "==", uid)));
+  const txns = snap.docs.map(d => d.data())
+    .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0))
+    .slice(0, 8);
+
+  const icons = { deposit: "💰", withdraw: "📤", earning: "📈", bonus: "🎁", referral: "🤝" };
+  const container = document.getElementById("txn-list");
+  if (txns.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">💳</div><div class="empty-title">No transactions yet</div><div class="empty-text">Make your first deposit to start earning</div></div>';
+    return;
+  }
+  container.innerHTML = txns.map(t => `
+    <div class="txn-item">
+      <div class="txn-icon ${t.type}">${icons[t.type] || "💳"}</div>
+      <div class="txn-info">
+        <div class="txn-name">${t.description}</div>
+        <div class="txn-date">${relativeTime(t.createdAt)}</div>
       </div>
-      <div class="online-dot ${dc}"></div>
-    </div>`;
-  }).join('');
-  list.querySelectorAll('.user-row').forEach(r =>
-    r.addEventListener('click', () => openUserProfile(r.dataset.uid)));
-}
-
-function renderFriendRequests() {
-  const section = $('friend-requests-section');
-  const list    = $('friend-requests-list');
-  section.hidden = S.friendRequests.length === 0;
-  list.innerHTML = S.friendRequests.map(req => `
-    <div class="user-row">
-      <div class="user-row-info">
-        <div class="user-row-name">Friend Request</div>
-        <div class="user-row-sub">${escH(req.from)}</div>
+      <div class="txn-amount ${t.type === 'withdraw' ? 'neg' : 'pos'}">
+        ${t.type === 'withdraw' ? '-' : '+'}${fmt(t.amount)}
       </div>
-      <div class="row-actions">
-        <button class="accept-btn" data-id="${req.id}">Accept</button>
-        <button class="reject-btn" data-id="${req.id}">Decline</button>
+    </div>
+  `).join('');
+}
+
+// ============================================================
+//  RENDER PLANS
+// ============================================================
+function renderPlans() {
+  const container = document.getElementById("plan-cards-container");
+  container.innerHTML = PLANS.map(p => `
+    <div class="plan-card ${p.class}">
+      <div class="plan-badge">${p.emoji} ${p.name}</div>
+      <div class="plan-top">
+        <div>
+          <div class="plan-invest">${fmtShort(p.amount)}</div>
+          <div class="plan-invest-label">Capital Required</div>
+        </div>
+        <div class="plan-roi-badge">
+          ${fmt(p.daily)}<small>per day</small>
+        </div>
       </div>
-    </div>`).join('');
-  list.querySelectorAll('.accept-btn').forEach(b => b.addEventListener('click', () => acceptRequest(b.dataset.id)));
-  list.querySelectorAll('.reject-btn').forEach(b => b.addEventListener('click', () => rejectRequest(b.dataset.id)));
-}
-
-async function renderConversations(convs) {
-  const list  = $('conversations-list');
-  const empty = $('messages-empty');
-  empty.hidden = convs.length > 0;
-  if (!convs.length) { list.innerHTML = ''; return; }
-
-  const items = await Promise.all(convs.map(async c => {
-    const ouid = c.participants.find(p => p !== S.user.uid);
-    let p = S.friends[ouid] || S.nearbyUsers[ouid];
-    if (!p) { const s = await getDoc(doc(db, 'users', ouid)); p = s.exists() ? s.data() : { displayName: 'Unknown', photoURL: '' }; }
-    const unread = !c.readBy?.includes(S.user.uid);
-    const time   = c.lastMessageAt?.toDate?.()?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '';
-    return `<div class="conv-row" data-uid="${ouid}">
-      ${avatarHTML('size-md', p)}
-      <div class="conv-info">
-        <div class="conv-name">${escH(p.displayName || 'User')}</div>
-        <div class="conv-last${unread ? ' unread' : ''}">${escH(c.lastMessage || '…')}</div>
+      <div class="plan-stats">
+        <div class="plan-stat">
+          <div class="plan-stat-val">${p.days}</div>
+          <div class="plan-stat-lbl">Days</div>
+        </div>
+        <div class="plan-stat">
+          <div class="plan-stat-val">${fmtShort(p.daily)}</div>
+          <div class="plan-stat-lbl">Daily</div>
+        </div>
+        <div class="plan-stat">
+          <div class="plan-stat-val">${fmtShort(p.total)}</div>
+          <div class="plan-stat-lbl">Total</div>
+        </div>
       </div>
-      <div class="conv-meta">
-        <span class="conv-time">${time}</span>
-        ${unread ? '<div class="conv-unread-dot"></div>' : ''}
-      </div>
-    </div>`;
-  }));
-  list.innerHTML = items.join('');
-  list.querySelectorAll('.conv-row').forEach(r =>
-    r.addEventListener('click', () => openChat(r.dataset.uid)));
+      <div class="plan-bar"><div class="plan-bar-fill" style="width:${Math.min(100, (p.amount/18000)*100+20)}%"></div></div>
+      <button class="btn-invest" onclick="selectPlan('${p.id}')">
+        Invest ${fmt(p.amount)}
+      </button>
+    </div>
+  `).join('');
 }
 
-// ════════════════════════════════════════════════════════════
-//  USER PROFILE (other user)
-// ════════════════════════════════════════════════════════════
-function openUserProfile(uid) {
-  S.viewingUid = uid;
-  const p = S.friends[uid] || S.nearbyUsers[uid];
-  if (!p) return;
-  setAvatar('up-avatar-initial', 'up-avatar-img', p);
-  $('up-name').textContent         = p.displayName || 'User';
-  $('up-status-badge').textContent = statusText(p) || 'Active';
-  const z = zoneMatch(p);
-  $('up-location').textContent = z ? `📍 ${z}` : p.location ? `${p.location.lat.toFixed(4)}, ${p.location.lng.toFixed(4)}` : 'Unknown';
-  $('up-battery').textContent  = p.battery != null ? `${p.battery}%${p.isCharging ? ' ⚡ Charging' : ''}` : 'Unknown';
-  $('up-speed').textContent    = (p.speed || 0) > 0 ? `${p.speed} km/h` : 'Stationary';
-  const ts = p.location?.updatedAt?.toDate?.();
-  if (ts) {
-    const m = Math.round((Date.now() - ts) / 60000);
-    $('up-since').textContent = m < 2 ? 'Just now' : m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ago`;
-  } else $('up-since').textContent = '–';
-  $('up-add-friend-btn').hidden = !!S.friends[uid];
-  openPanel('user-profile');
-}
-
-// ════════════════════════════════════════════════════════════
-//  GHOST MODE
-// ════════════════════════════════════════════════════════════
-async function setGhost(on) {
-  S.ghostMode = on;
-  $('ghost-toggle').checked = on;
-  $('ghost-btn').classList.toggle('active', on);
-  $('ghost-indicator').hidden = !on;
-  const upd = { ghostMode: on, ghostLocation: on && S.myLat ? { lat: S.myLat, lng: S.myLng } : null };
-  await updateDoc(doc(db, 'users', S.user.uid), upd).catch(() => {});
-  if (S.profile) { S.profile.ghostMode = on; if (!on) S.profile.ghostLocation = null; }
-  upsertSelf();
-  showToast(on ? '👻 Ghost mode on' : 'Ghost mode off');
-}
-
-// ════════════════════════════════════════════════════════════
-//  NAVIGATION / PANELS
-// ════════════════════════════════════════════════════════════
-const PANEL_MAP = {
-  map: null, friends: 'friends-panel', messages: 'messages-panel',
-  profile: 'profile-panel', chat: 'chat-panel',
-  'user-profile': 'user-profile-panel', settings: 'settings-panel',
+window.selectPlan = function(planId) {
+  if (!userData?.depositMade) {
+    showToast("Make your first deposit to activate a plan", "error");
+    return openModal("modal-deposit");
+  }
+  if (userData?.activePlan) {
+    const current = PLANS.find(p => p.id === userData.activePlan);
+    showToast(`You already have an active ${current?.name} plan`, "error");
+    return;
+  }
+  const plan = PLANS.find(p => p.id === planId);
+  document.getElementById("invest-plan-name").textContent = plan.name + " Plan";
+  document.getElementById("invest-amount").textContent = fmt(plan.amount);
+  document.getElementById("invest-daily").textContent = fmt(plan.daily) + "/day";
+  document.getElementById("invest-total").textContent = fmt(plan.total);
+  document.getElementById("btn-confirm-invest").onclick = () => confirmInvestment(planId);
+  openModal("modal-invest");
 };
 
-function openPanel(name) {
-  S.activePanel = name;
-  document.querySelectorAll('.nav-item').forEach(b =>
-    b.classList.toggle('active', b.dataset.panel === name));
-  document.querySelectorAll('.panel').forEach(p => {
-    p.classList.remove('open'); p.setAttribute('aria-hidden', 'true');
-  });
-  const id = PANEL_MAP[name];
-  if (id) { const el = $(id); el.classList.add('open'); el.setAttribute('aria-hidden', 'false'); }
+window.confirmInvestment = async function(planId) {
+  const plan = PLANS.find(p => p.id === planId);
+  const bal = (userData?.balance || 0) + (userData?.bonusBalance || 0) + (userData?.earningsBalance || 0);
+  if (bal < plan.amount) {
+    showToast("Insufficient balance — please make a deposit", "error");
+    closeModal("modal-invest");
+    return openModal("modal-deposit");
+  }
+  setLoading("btn-confirm-invest", true, "Confirm Investment");
+  try {
+    const isFirstInvestment = !userData.referralBonusPaid && userData.referredBy;
+
+    await updateDoc(doc(db, "users", currentUser.uid), {
+      activePlan: planId,
+      planStartDate: serverTimestamp(),
+      planDaysElapsed: 0,
+      totalInvested: increment(plan.amount),
+      balance: increment(-plan.amount),
+      ...(isFirstInvestment ? { referralBonusPaid: true } : {})
+    });
+    await addDoc(collection(db, "transactions"), {
+      uid: currentUser.uid, type: "deposit",
+      amount: plan.amount,
+      description: `${plan.name} Plan Activation`,
+      status: "completed", createdAt: serverTimestamp()
+    });
+
+    // Pay referrer ₦2,000 to referralBalance (immediately withdrawable) on first investment only
+    if (isFirstInvestment) {
+      const REFERRAL_BONUS = 2000;
+      await updateDoc(doc(db, "users", userData.referredBy), {
+        referralBalance: increment(REFERRAL_BONUS),
+        totalEarnings: increment(REFERRAL_BONUS)
+      });
+      await addDoc(collection(db, "transactions"), {
+        uid: userData.referredBy,
+        type: "referral",
+        amount: REFERRAL_BONUS,
+        description: `Referral bonus — ${userData.fullName} made their first investment`,
+        status: "completed",
+        createdAt: serverTimestamp()
+      });
+    }
+
+    closeModal("modal-invest");
+    showToast(`🎉 ${plan.name} Plan activated! Earnings start now.`, "success");
+    showTab("home");
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+  setLoading("btn-confirm-invest", false, "Confirm Investment");
+};
+
+// ============================================================
+//  PROJECTS
+// ============================================================
+const PROJECTS = [
+  {
+    name: "Solar Mini-Grids",
+    tag: "Clean Energy",
+    desc: "Powering 500+ rural communities across Nigeria with sustainable solar mini-grid infrastructure, reducing energy poverty and creating jobs.",
+    target: 5000000000,
+    raised: 3750000000,
+    investors: 12847,
+    roi: "20% daily",
+    imgUrl: "https://images.unsplash.com/photo-1509391366360-2e959784a276?w=600&q=80",
+    emoji: "☀️"
+  },
+  {
+    name: "Gas Distribution Network",
+    tag: "Gas Infrastructure",
+    desc: "Expanding Nigeria's gas distribution network to serve industrial and domestic consumers, reducing gas flaring by 40% in target regions.",
+    target: 12000000000,
+    raised: 8400000000,
+    investors: 28460,
+    roi: "20% daily",
+    imgUrl: "https://images.unsplash.com/photo-1587691592099-24045742c181?w=600&q=80",
+    emoji: "🔥"
+  },
+  {
+    name: "Clean Energy Infrastructure",
+    tag: "Renewable Energy",
+    desc: "Building Nigeria's largest wind and hydro energy infrastructure project, targeting 2GW of clean energy capacity by 2026.",
+    target: 25000000000,
+    raised: 11750000000,
+    investors: 45230,
+    roi: "20% daily",
+    imgUrl: "https://images.unsplash.com/photo-1466611653911-95081537e5b7?w=600&q=80",
+    emoji: "💨"
+  },
+  {
+    name: "Agricultural Fuel Supply",
+    tag: "AgriEnergy",
+    desc: "Dedicated fuel supply chain for Nigerian agricultural sector — ensuring 24/7 power for irrigation, processing plants, and cold storage.",
+    target: 3500000000,
+    raised: 2100000000,
+    investors: 8910,
+    roi: "20% daily",
+    imgUrl: "https://images.unsplash.com/photo-1625246333195-78d9c38ad449?w=600&q=80",
+    emoji: "🌾"
+  }
+];
+
+function renderProjects() {
+  const container = document.getElementById("project-cards-container");
+  container.innerHTML = PROJECTS.map(p => {
+    const pct = Math.round((p.raised / p.target) * 100);
+    return `
+      <div class="project-card">
+        <div style="position:relative; overflow:hidden;">
+          <img class="project-img" src="${p.imgUrl}" alt="${p.name}" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+          <div class="project-img-placeholder" style="display:none">${p.emoji}</div>
+        </div>
+        <div class="project-body">
+          <span class="project-tag">${p.tag}</span>
+          <div class="project-name">${p.name}</div>
+          <div class="project-desc">${p.desc}</div>
+          <div class="project-progress">
+            <div class="progress-labels">
+              <span class="progress-raised">${fmtShort(p.raised)} raised</span>
+              <span class="progress-target">Target: ${fmtShort(p.target)}</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+          </div>
+          <div class="project-stats">
+            <div class="proj-stat"><span>${pct}%</span> funded</div>
+            <div class="proj-stat"><span>${p.investors.toLocaleString()}</span> investors</div>
+            <div class="proj-stat">ROI: <span>${p.roi}</span></div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
-function bindNav() {
-  document.querySelectorAll('.nav-item').forEach(btn =>
-    btn.addEventListener('click', () => {
-      openPanel(btn.dataset.panel);
-      if (btn.dataset.panel === 'map') recenterMap();
-    })
-  );
+// ============================================================
+//  EARNINGS CALCULATOR
+// ============================================================
+window.calculateEarnings = function() {
+  const amount = parseFloat(document.getElementById("calc-amount").value);
+  const planId  = document.getElementById("calc-plan").value;
+  if (!amount || amount <= 0) return showToast("Enter a valid amount", "error");
+
+  const plan = PLANS.find(p => p.id === planId);
+  const daily  = (amount / plan.amount) * plan.daily;
+  const total  = daily * plan.days;
+
+  document.getElementById("calc-plan-name").textContent = plan.name + " Plan";
+  document.getElementById("calc-daily-ret").textContent = fmt(daily);
+  document.getElementById("calc-duration").textContent = plan.days + " days";
+  document.getElementById("calc-total-ret").textContent = fmt(total);
+  document.getElementById("calc-capital").textContent = fmt(amount);
+  document.getElementById("calc-net").textContent = fmt(total - amount);
+  document.getElementById("calc-result").classList.add("show");
+};
+
+// ============================================================
+//  DEPOSIT MODULE
+// ============================================================
+let depositFileUrl = null;
+
+window.openDepositModal = function() {
+  document.getElementById("deposit-amount-input").value = "";
+  document.getElementById("file-preview-dep").classList.remove("show");
+  depositFileUrl = null;
+  openModal("modal-deposit");
+};
+
+document.getElementById("deposit-upload-area")?.addEventListener("click", () => {
+  document.getElementById("deposit-file-input").click();
+});
+
+document.getElementById("deposit-file-input")?.addEventListener("change", async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  document.getElementById("dep-upload-text").textContent = "Uploading...";
+  const url = await uploadToCloudinary(file);
+  if (url) {
+    depositFileUrl = url;
+    document.getElementById("file-preview-dep").classList.add("show");
+    document.getElementById("file-preview-dep-name").textContent = file.name;
+    document.getElementById("dep-upload-text").textContent = "✓ Receipt uploaded";
+    showToast("Receipt uploaded successfully", "success");
+  }
+});
+
+async function uploadToCloudinary(file) {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+  try {
+    const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/upload`, { method: "POST", body: fd });
+    const data = await res.json();
+    return data.secure_url;
+  } catch {
+    showToast("Upload failed. Check your Cloudinary config.", "error");
+    return null;
+  }
 }
 
-function bindBackBtns() {
-  document.querySelectorAll('.back-btn').forEach(btn =>
-    btn.addEventListener('click', () => openPanel(btn.dataset.back || 'map'))
-  );
+document.getElementById("btn-submit-deposit")?.addEventListener("click", async () => {
+  const amount = parseFloat(document.getElementById("deposit-amount-input").value);
+  if (!amount || amount < 1000) return showToast("Minimum deposit is ₦1,000", "error");
+  if (!depositFileUrl) return showToast("Please upload your payment receipt", "error");
+
+  setLoading("btn-submit-deposit", true, "Submit Deposit");
+  try {
+    await addDoc(collection(db, "deposits"), {
+      uid: currentUser.uid,
+      userName: userData.fullName,
+      userEmail: userData.email,
+      phone: userData.phone || "",
+      amount,
+      receiptUrl: depositFileUrl,
+      status: "pending",
+      createdAt: serverTimestamp()
+    });
+
+    // Notify admin on Telegram
+    await sendTelegramAlert(
+      `💰 <b>New Deposit Request</b>\n👤 ${userData.fullName}\n📱 ${userData.phone || "N/A"}\n📧 ${userData.email}\n💵 ₦${amount.toLocaleString()}\n🧾 Receipt submitted`
+    );
+
+    closeModal("modal-deposit");
+    showToast("Deposit submitted! Awaiting admin approval.", "success");
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+  setLoading("btn-submit-deposit", false, "Submit Deposit");
+});
+
+// ============================================================
+//  PAYMENT PAGE (with timer)
+// ============================================================
+window.showPaymentPage = function() {
+  document.getElementById("pay-bank").textContent = PAYMENT_DETAILS.bank;
+  document.getElementById("pay-name").textContent = PAYMENT_DETAILS.accountName;
+  document.getElementById("pay-number").textContent = PAYMENT_DETAILS.accountNumber;
+  closeModal("modal-deposit");
+  openModal("modal-payment");
+  startPaymentTimer();
+};
+
+function startPaymentTimer() {
+  clearInterval(paymentTimer);
+  let secs = PAYMENT_TIMER_MINUTES * 60;
+  updateTimerDisplay(secs);
+  paymentTimer = setInterval(() => {
+    secs--;
+    updateTimerDisplay(secs);
+    if (secs <= 0) {
+      clearInterval(paymentTimer);
+      closeModal("modal-payment");
+      showToast("Payment time expired. Please try again.", "error");
+    }
+  }, 1000);
 }
 
-// ════════════════════════════════════════════════════════════
-//  TOP BAR
-// ════════════════════════════════════════════════════════════
-function bindTopBar() {
-  $('my-avatar-btn').addEventListener('click', () => openPanel('profile'));
-  $('mode-toggle').addEventListener('click', e => {
-    const btn = e.target.closest('.mode-btn');
-    if (!btn || btn.dataset.mode === S.mapMode) return;
-    S.mapMode = btn.dataset.mode;
-    document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === S.mapMode));
-    if (S.mapMode === 'explore') loadNearbyUsers();
-    else { clearExploreMarkers(); refreshMapMarkers(); }
-  });
-  $('ghost-btn').addEventListener('click', () => setGhost(!S.ghostMode));
+function updateTimerDisplay(secs) {
+  const m = Math.floor(secs / 60).toString().padStart(2, "0");
+  const s = (secs % 60).toString().padStart(2, "0");
+  document.getElementById("timer-display").textContent = `${m}:${s}`;
 }
 
-// ════════════════════════════════════════════════════════════
-//  PROFILE BINDINGS
-// ════════════════════════════════════════════════════════════
-function bindProfile() {
-  $('change-photo-btn').addEventListener('click', () => $('photo-input').click());
-  $('photo-input').addEventListener('change', e => { if (e.target.files[0]) uploadPhoto(e.target.files[0]); e.target.value = ''; });
-  $('public-toggle').addEventListener('change', async e => {
-    await updateDoc(doc(db, 'users', S.user.uid), { isPublic: e.target.checked }).catch(() => {});
-    if (S.profile) S.profile.isPublic = e.target.checked;
-    showToast(e.target.checked ? 'Visible to everyone nearby.' : 'Friends-only mode.');
-  });
-  $('ghost-toggle').addEventListener('change', e => setGhost(e.target.checked));
-  $('add-zone-btn').addEventListener('click', () => { $('zone-name-input').value = ''; $('zone-modal').hidden = false; setTimeout(() => $('zone-name-input').focus(), 100); });
-  $('settings-btn').addEventListener('click', () => openPanel('settings'));
-  $('save-settings-btn').addEventListener('click', async () => {
-    const name = $('settings-name').value.trim();
-    if (!name) return;
-    await Promise.all([
-      updateProfile(auth.currentUser, { displayName: name }),
-      updateDoc(doc(db, 'users', S.user.uid), { displayName: name }),
-    ]);
-    if (S.profile) S.profile.displayName = name;
-    $('profile-name').textContent = name;
-    upsertSelf(); showToast('Name updated!'); openPanel('profile');
-  });
-  $('logout-btn').addEventListener('click', async () => {
-    if (S.watchId) navigator.geolocation.clearWatch(S.watchId);
-    S.unsubs.forEach(u => u());
-    if (S.convUnsub) S.convUnsub();
-    if (S.chatUnsub) S.chatUnsub();
-    await updateDoc(doc(db, 'users', S.user.uid), { status: 'offline' }).catch(() => {});
-    await signOut(auth);
-    location.reload();
-  });
+window.copyAccountNumber = function() {
+  navigator.clipboard.writeText(PAYMENT_DETAILS.accountNumber).then(() => showToast("Account number copied!", "success"));
+};
 
-  // User profile buttons
-  $('up-message-btn').addEventListener('click', () => { if (S.viewingUid) openChat(S.viewingUid); });
-  $('up-add-friend-btn').addEventListener('click', async () => {
-    const p = S.friends[S.viewingUid] || S.nearbyUsers[S.viewingUid];
-    if (!p?.email) return;
-    const err = await sendFriendRequest(p.email);
-    showToast(err || 'Friend request sent!');
-  });
+window.donePayment = function() {
+  clearInterval(paymentTimer);
+  closeModal("modal-payment");
+  openModal("modal-deposit");
+  showToast("Now upload your payment receipt below", "info");
+};
+
+// ============================================================
+//  WITHDRAWAL
+// ============================================================
+window.openWithdrawModal = function() {
+  if (!userData) return;
+
+  const minPlan = PLANS[0]; // Starter plan — minimum deposit required
+
+  const bonusBal    = userData.bonusBalance    || 0;
+  const referralBal = userData.referralBalance || 0;
+  const earnsBal    = userData.earningsBalance  || 0;
+  const elapsed     = userData.planDaysElapsed  || 0;
+  const canWithdrawEarnings = elapsed >= WITHDRAW_DELAY_DAYS;
+
+  // ── RULE: no withdrawals of ANY kind until the user has made their first deposit.
+  // Once depositMade = true, ALL balances unlock:
+  //   • signup bonus    → immediately
+  //   • referral bonus  → immediately (referrer already deposited before their referee joined)
+  //   • earnings        → after Day 2 of active plan
+  if (!userData.depositMade) {
+    document.getElementById("withdraw-bonus-row").style.display = "none";
+    const refRow = document.getElementById("withdraw-referral-row");
+    if (refRow) refRow.style.display = "none";
+    document.getElementById("withdraw-earnings-row").style.display = "none";
+    document.getElementById("withdraw-balance-val").textContent = fmt(0);
+    document.getElementById("withdraw-lock-notice").style.display = "flex";
+    document.getElementById("withdraw-lock-notice").innerHTML =
+      `<span>🔒</span><span>You must make your first deposit of at least ${fmt(minPlan.amount)} (${minPlan.name} Plan) before you can withdraw any funds — including your signup bonus and any referral bonuses.</span>`;
+    document.getElementById("withdraw-form-fields").style.display = "none";
+    openModal("modal-withdraw");
+    return;
+  }
+
+  // User has deposited — calculate what's available
+  const available = bonusBal + referralBal + (canWithdrawEarnings ? earnsBal : 0);
+
+  // Merge signup bonus + referral bonus into a single "Bonus & Referral" row.
+  // This avoids depending on a separate withdraw-referral-row HTML element.
+  const combinedBonusLabel = referralBal > 0
+    ? `${fmt(bonusBal)} bonus + ${fmt(referralBal)} referral`
+    : fmt(bonusBal);
+  document.getElementById("withdraw-bonus-row").style.display = (bonusBal + referralBal) > 0 ? "flex" : "none";
+  document.getElementById("withdraw-bonus-val").textContent   = combinedBonusLabel;
+
+  // Optional referral row — hide if it exists; we show it merged above
+  const refRow = document.getElementById("withdraw-referral-row");
+  if (refRow) refRow.style.display = "none";
+
+  document.getElementById("withdraw-earnings-row").style.display = "flex";
+  document.getElementById("withdraw-earnings-val").textContent = canWithdrawEarnings
+    ? fmt(earnsBal)
+    : `${fmt(earnsBal)} (unlocks Day 2)`;
+  document.getElementById("withdraw-balance-val").textContent = fmt(available);
+
+  if (available <= 0) {
+    document.getElementById("withdraw-lock-notice").style.display = "flex";
+    document.getElementById("withdraw-lock-notice").innerHTML = elapsed < WITHDRAW_DELAY_DAYS && userData.activePlan
+      ? `<span>⏳</span><span>Your plan earnings unlock after Day ${WITHDRAW_DELAY_DAYS}. You are on Day ${elapsed}.</span>`
+      : `<span>ℹ️</span><span>No funds available to withdraw yet.</span>`;
+    document.getElementById("withdraw-form-fields").style.display = "none";
+  } else {
+    document.getElementById("withdraw-lock-notice").style.display = "none";
+    document.getElementById("withdraw-form-fields").style.display = "block";
+    if (userData.bankAccount) {
+      document.getElementById("wd-account-number").value = userData.bankAccount;
+      document.getElementById("wd-bank-name").value      = userData.bankName || "";
+      document.getElementById("wd-account-name").value   = userData.accountName || "";
+    }
+  }
+  openModal("modal-withdraw");
+};
+
+document.getElementById("btn-submit-withdraw")?.addEventListener("click", async () => {
+  const amount  = parseFloat(document.getElementById("wd-amount").value);
+  const accNum  = document.getElementById("wd-account-number").value.trim();
+  const bank    = document.getElementById("wd-bank-name").value.trim();
+  const accName = document.getElementById("wd-account-name").value.trim();
+
+  // Hard guard — no withdrawals before first deposit
+  if (!userData?.depositMade) {
+    return showToast("Make your first deposit (min. ₦4,000 Starter Plan) to unlock withdrawals", "error");
+  }
+
+  const referralBal = userData?.referralBalance || 0;
+  const bonusBal    = userData?.bonusBalance    || 0;
+  const earnsBal    = userData?.earningsBalance  || 0;
+  const elapsed     = userData?.planDaysElapsed  || 0;
+  const canWithdrawEarnings = elapsed >= WITHDRAW_DELAY_DAYS;
+
+  // After first deposit: bonus + referral immediately available; earnings after Day 2
+  const available = bonusBal + referralBal + (canWithdrawEarnings ? earnsBal : 0);
+
+  if (!amount || amount < 500)      return showToast("Minimum withdrawal is ₦500", "error");
+  if (amount > available)            return showToast("Insufficient available balance", "error");
+  if (!accNum || !bank || !accName)  return showToast("Fill all bank details", "error");
+
+  // Deduct: referral first → bonus → earnings
+  let remaining = amount;
+  const deductReferral = Math.min(remaining, referralBal);                        remaining -= deductReferral;
+  const deductBonus    = Math.min(remaining, bonusBal);                           remaining -= deductBonus;
+  const deductEarnings = Math.min(remaining, canWithdrawEarnings ? earnsBal : 0);
+
+  setLoading("btn-submit-withdraw", true, "Request Withdrawal");
+  try {
+    const uid = currentUser.uid;
+    await updateDoc(doc(db, "users", uid), {
+      bankAccount: accNum, bankName: bank, accountName: accName,
+      ...(deductReferral > 0 ? { referralBalance: increment(-deductReferral) } : {}),
+      ...(deductBonus    > 0 ? { bonusBalance:    increment(-deductBonus)    } : {}),
+      ...(deductEarnings > 0 ? { earningsBalance: increment(-deductEarnings) } : {})
+    });
+
+    await addDoc(collection(db, "withdrawals"), {
+      uid, userName: userData.fullName, userEmail: userData.email,
+      phone: userData.phone || "",
+      amount, accNum, bank, accName,
+      status: "pending", createdAt: serverTimestamp()
+    });
+
+    await addDoc(collection(db, "transactions"), {
+      uid, type: "withdraw", amount,
+      description: `Withdrawal to ${bank} (${accNum})`,
+      status: "pending", createdAt: serverTimestamp()
+    });
+
+    // Notify admin on Telegram
+    await sendTelegramAlert(
+      `💸 <b>Withdrawal Request</b>\n👤 ${userData.fullName}\n📱 ${userData.phone || "N/A"}\n💰 ₦${amount.toLocaleString()}\n🏦 ${bank}\n🔢 ${accNum}\n📋 ${accName}`
+    );
+
+    closeModal("modal-withdraw");
+    showToast("Withdrawal request submitted! Admin will process it within 24 hrs.", "success");
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+  setLoading("btn-submit-withdraw", false, "Request Withdrawal");
+});
+
+// ============================================================
+//  PROFILE
+// ============================================================
+function renderProfile() {
+  if (!userData) return;
+  const name = userData.fullName || "Investor";
+  document.getElementById("profile-name").textContent = name;
+  document.getElementById("profile-email-text").textContent = userData.email || "";
+  document.getElementById("profile-ref-code").textContent = userData.referralCode || "";
+  document.getElementById("profile-avatar-big").textContent = name[0].toUpperCase();
+  document.getElementById("profile-phone-text").textContent = userData.phone || "Not set";
+  document.getElementById("profile-kyc-status").textContent = userData.kycStatus === "verified" ? "✓ Verified" : "Pending";
 }
 
-// ════════════════════════════════════════════════════════════
-//  FRIENDS BINDINGS
-// ════════════════════════════════════════════════════════════
-function bindFriends() {
-  $('add-friend-btn').addEventListener('click', () => {
-    $('add-friend-email').value = '';
-    $('add-friend-error').textContent = '';
-    $('add-friend-modal').hidden = false;
-    setTimeout(() => $('add-friend-email').focus(), 100);
+// ============================================================
+//  ACCOUNT UPDATE MODAL
+// ============================================================
+window.openAccountModal = function() {
+  document.getElementById("acc-fullname").value = userData?.fullName || "";
+  document.getElementById("acc-phone").value = userData?.phone || "";
+  document.getElementById("acc-bank").value = userData?.bankName || "";
+  document.getElementById("acc-account-number").value = userData?.bankAccount || "";
+  document.getElementById("acc-account-name").value = userData?.accountName || "";
+  openModal("modal-account");
+};
+
+document.getElementById("btn-save-account")?.addEventListener("click", async () => {
+  const fullName = document.getElementById("acc-fullname").value.trim();
+  const phone    = document.getElementById("acc-phone").value.trim();
+  const bankName = document.getElementById("acc-bank").value.trim();
+  const bankAccount = document.getElementById("acc-account-number").value.trim();
+  const accountName = document.getElementById("acc-account-name").value.trim();
+
+  if (!fullName) return showToast("Name is required", "error");
+
+  setLoading("btn-save-account", true, "Save Changes");
+  try {
+    await updateDoc(doc(db, "users", currentUser.uid), {
+      fullName, phone, bankName, bankAccount, accountName
+    });
+    await updateProfile(currentUser, { displayName: fullName });
+    closeModal("modal-account");
+    showToast("Profile updated successfully", "success");
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+  setLoading("btn-save-account", false, "Save Changes");
+});
+
+// ============================================================
+//  REFERRAL TAB
+// ============================================================
+window.renderReferralTab = async function() {
+  if (!userData || !currentUser) return;
+  const ref  = userData.referralCode || "";
+  const link = `${window.location.origin}${window.location.pathname}?ref=${ref}`;
+  document.getElementById("ref-tab-link").textContent       = link;
+  document.getElementById("ref-tab-bonus-bal").textContent  = fmt(userData.referralBalance || 0);
+
+  try {
+    const snap = await getDocs(query(collection(db, "users"), where("referredBy", "==", currentUser.uid)));
+    document.getElementById("ref-tab-count").textContent    = snap.size;
+    document.getElementById("ref-tab-earnings").textContent = fmt(snap.size * 2000);
+  } catch (_) {}
+};
+
+window.copyRefLinkTab = function() {
+  const text = document.getElementById("ref-tab-link")?.textContent || "";
+  navigator.clipboard.writeText(text).then(() => showToast("Referral link copied!", "success"));
+};
+
+window.shareRefLinkTab = function() {
+  const text = document.getElementById("ref-tab-link")?.textContent || "";
+  const msg  = `Earn daily returns on NNPC projects! Join with my link and get a free ₦2,000 bonus: ${text}`;
+  if (navigator.share) {
+    navigator.share({ title: "NNPC Invest", text: msg, url: text });
+  } else {
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+  }
+};
+
+window.joinTelegram = function() {
+  window.open(`https://t.me/${TELEGRAM_BOT_USERNAME}`, "_blank");
+  closeModal("modal-telegram-prompt");
+};
+
+// Legacy aliases (used in old modal-referral HTML)
+window.copyRefLink  = window.copyRefLinkTab;
+window.shareRefLink = window.shareRefLinkTab;
+
+// ============================================================
+//  KYC
+// ============================================================
+let kycFileUrl = null;
+
+document.getElementById("kyc-upload-area")?.addEventListener("click", () => {
+  document.getElementById("kyc-file-input").click();
+});
+
+document.getElementById("kyc-file-input")?.addEventListener("change", async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const url = await uploadToCloudinary(file);
+  if (url) {
+    kycFileUrl = url;
+    document.getElementById("file-preview-kyc").classList.add("show");
+    document.getElementById("file-preview-kyc-name").textContent = file.name;
+    showToast("Document uploaded", "success");
+  }
+});
+
+document.getElementById("btn-submit-kyc")?.addEventListener("click", async () => {
+  if (!kycFileUrl) return showToast("Please upload your ID document", "error");
+  setLoading("btn-submit-kyc", true, "Submit KYC");
+  try {
+    await updateDoc(doc(db, "users", currentUser.uid), { kycStatus: "pending", kycDoc: kycFileUrl });
+    await addDoc(collection(db, "kyc"), {
+      uid: currentUser.uid, userName: userData.fullName,
+      docUrl: kycFileUrl, status: "pending", createdAt: serverTimestamp()
+    });
+    closeModal("modal-kyc");
+    showToast("KYC submitted! Under review.", "success");
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+  setLoading("btn-submit-kyc", false, "Submit KYC");
+});
+
+// ============================================================
+//  ANNOUNCEMENTS
+// ============================================================
+async function loadAnnouncements() {
+  // Client-side sort — avoids Firestore composite index requirement
+  const snap = await getDocs(collection(db, "announcements"));
+  const list = snap.docs.map(d => d.data())
+    .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0))
+    .slice(0, 5);
+  const container = document.getElementById("announce-list");
+  if (!container) return;
+  if (list.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">📢</div><div class="empty-title">No announcements</div></div>';
+    return;
+  }
+  container.innerHTML = list.map(a => `
+    <div class="announce-banner" style="margin-bottom:12px">
+      <div class="announce-icon">📢</div>
+      <div>
+        <div class="announce-title">${a.title}</div>
+        <div class="announce-text">${a.message}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px">${relativeTime(a.createdAt)}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ============================================================
+//  LOGOUT
+// ============================================================
+window.logout = async function() {
+  if (!confirm("Sign out of your account?")) return;
+  if (unsubscribeSnapshot) unsubscribeSnapshot();
+  await signOut(auth);
+  showScreen("screen-login");
+};
+
+// ============================================================
+//  SHOW PASSWORD TOGGLE
+// ============================================================
+document.querySelectorAll(".toggle-pw").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const input = btn.previousElementSibling || btn.closest(".input-wrap").querySelector("input");
+    input.type = input.type === "password" ? "text" : "password";
+    btn.textContent = input.type === "password" ? "👁️" : "🙈";
   });
-}
+});
 
-// ════════════════════════════════════════════════════════════
-//  CHAT BINDINGS
-// ════════════════════════════════════════════════════════════
-function bindChat() {
-  $('send-btn').addEventListener('click', sendMessage);
-  $('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
-  $('chat-locate-btn').addEventListener('click', () => {
-    const p = S.friends[S.activeChatUid] || S.nearbyUsers[S.activeChatUid];
-    if (!p?.location) { showToast('Location not available.'); return; }
-    openPanel('map');
-    S.map.flyTo([p.location.lat, p.location.lng], 16, { duration: 1 });
+// ============================================================
+//  BOTTOM NAV
+// ============================================================
+document.querySelectorAll(".nav-item").forEach(item => {
+  item.addEventListener("click", () => {
+    const tab = item.dataset.tab;
+    showTab(tab);
+    if (tab === "plans")    renderPlans();
+    if (tab === "projects") renderProjects();
+    if (tab === "profile")  renderProfile();
+    if (tab === "referral") renderReferralTab();
+    if (tab === "calc") {
+      const select = document.getElementById("calc-plan");
+      if (select && !select.children.length) {
+        PLANS.forEach(p => {
+          const opt = document.createElement("option");
+          opt.value = p.id;
+          opt.textContent = `${p.name} (₦${p.amount.toLocaleString()})`;
+          select.appendChild(opt);
+        });
+      }
+    }
   });
-  $('chat-user-info').addEventListener('click', () => { if (S.activeChatUid) openUserProfile(S.activeChatUid); });
-}
+});
 
-// ════════════════════════════════════════════════════════════
-//  MODALS
-// ════════════════════════════════════════════════════════════
-function bindModals() {
-  // Add friend
-  $('cancel-add-friend').addEventListener('click', () => $('add-friend-modal').hidden = true);
-  $('confirm-add-friend').addEventListener('click', async () => {
-    const email = $('add-friend-email').value.trim();
-    if (!email) return;
-    const err = await sendFriendRequest(email);
-    if (err) { $('add-friend-error').textContent = err; }
-    else { $('add-friend-modal').hidden = true; showToast('Friend request sent!'); }
+// ============================================================
+//  CLOSE MODALS (backdrop click)
+// ============================================================
+document.querySelectorAll(".modal-overlay").forEach(overlay => {
+  overlay.addEventListener("click", e => {
+    if (e.target === overlay) {
+      overlay.classList.remove("open");
+      if (overlay.id === "modal-payment") clearInterval(paymentTimer);
+    }
   });
-  $('add-friend-modal').addEventListener('click', e => { if (e.target === $('add-friend-modal')) $('add-friend-modal').hidden = true; });
-  $('add-friend-email').addEventListener('keydown', async e => {
-    if (e.key !== 'Enter') return;
-    const email = $('add-friend-email').value.trim();
-    if (!email) return;
-    const err = await sendFriendRequest(email);
-    if (err) $('add-friend-error').textContent = err;
-    else { $('add-friend-modal').hidden = true; showToast('Friend request sent!'); }
-  });
+});
 
-  // Zone
-  $('cancel-zone').addEventListener('click', () => $('zone-modal').hidden = true);
-  $('confirm-zone').addEventListener('click', async () => {
-    const name = $('zone-name-input').value.trim();
-    if (!name) return;
-    $('zone-modal').hidden = true;
-    await addZone(name);
-  });
-  $('zone-name-input').addEventListener('keydown', async e => {
-    if (e.key !== 'Enter') return;
-    const name = $('zone-name-input').value.trim();
-    if (!name) return;
-    $('zone-modal').hidden = true;
-    await addZone(name);
-  });
-  $('zone-modal').addEventListener('click', e => { if (e.target === $('zone-modal')) $('zone-modal').hidden = true; });
-}
+// ============================================================
+//  CHECK REFERRAL CODE IN URL
+// ============================================================
+(function checkRefUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const ref = params.get("ref");
+  if (ref) {
+    const refInput = document.getElementById("reg-ref");
+    if (refInput) refInput.value = ref;
+  }
+})();
 
-// ════════════════════════════════════════════════════════════
-//  UTILITIES
-// ════════════════════════════════════════════════════════════
-function haversine(lat1, lon1, lat2, lon2) {
-  const R = 6371, r = Math.PI / 180;
-  const dLat = (lat2 - lat1) * r, dLon = (lon2 - lon1) * r;
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function escH(s) {
-  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function avatarHTML(cls, p) {
-  if (p?.photoURL) return `<div class="avatar ${cls}"><img src="${escH(p.photoURL)}" alt="" loading="lazy"/></div>`;
-  return `<div class="avatar ${cls}"><span>${escH((p?.displayName || '?')[0].toUpperCase())}</span></div>`;
-}
-
-let _toastTimer;
-function showToast(msg) {
-  const el = $('toast');
-  el.textContent = msg;
-  el.classList.add('show');
-  clearTimeout(_toastTimer);
-  _toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
-}
+// ============================================================
+//  INIT
+// ============================================================
+(function init() {
+  renderOnboarding();
+  document.getElementById("full-loader").style.display = "flex";
+  // Auth state listener handles everything else
+})();
